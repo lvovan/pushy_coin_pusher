@@ -144,6 +144,10 @@ export class AudioBus {
     bypassCap: boolean = false,
   ): void {
     if (!this.ctx || !this.gain || !buf) return;
+    // Discard sounds while muted — never queue them. A suspended AudioContext
+    // (pre-gesture) silently buffers any source scheduled via `src.start()`
+    // and replays the entire backlog at once on resume, so we drop here.
+    if (this.muted || this.ctx.state !== 'running') return;
     // Hard cap on overlapping sources so a burst of physics contacts at startup
     // cannot queue minutes of audio. Extras are dropped silently. `bypassCap`
     // is set for user-action sounds (slot-tap drop) so they always play.

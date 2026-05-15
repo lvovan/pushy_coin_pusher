@@ -20,8 +20,10 @@ const VARIANT_COUNT = 3;
 const VARIANT_BOX_SMALL = 0.015;
 const VARIANT_SPHERE_RADIUS = 0.018;
 const VARIANT_BOX_LARGE = 0.022;
-const LINEAR_DAMPING = 0.2;
-const ANGULAR_DAMPING = 0.25;
+// Damping bumped from 0.2/0.25. See CoinPool for rationale (kept moderate;
+// over-damping interacts poorly with the kinematic pusher).
+const LINEAR_DAMPING = 0.35;
+const ANGULAR_DAMPING = 0.65;
 
 export interface ValuableSlot {
   active: boolean;

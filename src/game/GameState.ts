@@ -6,7 +6,7 @@
  */
 import { gameBalance } from '../config/gameBalance';
 
-export type GameMode = 'home' | 'playing' | 'gameOver';
+export type GameMode = 'home' | 'playing' | 'gameOver' | 'won';
 
 export interface DropSlotState {
   id: 0 | 1 | 2;
@@ -92,6 +92,21 @@ export class GameState {
   awardValuableWin(): void {
     this.mutate((s) => {
       s.valuablesCollected += 1;
+    });
+    this.triggerWinIfAllValuablesCollected();
+  }
+
+  /**
+   * Win condition (FR — “All Valuables Collected”): once every designated
+   * valuable has been transferred into the collection bin, end the session
+   * with a win. Functionally equivalent to game-over in that gameplay stops
+   * and an overlay is shown, but distinct so the UI can celebrate.
+   */
+  triggerWinIfAllValuablesCollected(): void {
+    if (this.mode !== 'playing') return;
+    if (this.valuablesCollected < gameBalance.valuables.initialCount) return;
+    this.mutate((s) => {
+      s.mode = 'won';
     });
   }
 

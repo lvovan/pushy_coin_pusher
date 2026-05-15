@@ -12,6 +12,19 @@ import { gameBalance } from '../config/gameBalance';
 
 export type PhysicsPhase = 'idle' | 'stepping';
 
+// Rapier's default solver runs `numSolverIterations = 4` PGS iterations
+// per step. For piles of small rigid bodies that's not enough to resolve
+// stacked contacts cleanly: the solver leaves residual velocity in the
+// pile every step, which the integrator then turns into visible
+// position jitter — even on bodies resting on a completely static
+// floor. Doubling the iteration count is the standard Rapier recipe for
+// "stuff jitters when stacked": it costs a small amount of CPU per
+// step but eliminates the jitter at the source. We do NOT change
+// `lengthUnit` — shrinking it scales contact stiffness up, which makes
+// stacks bouncier, not calmer.
+const SOLVER_ITERATIONS = 12;
+const FRICTION_ITERATIONS = 12;
+
 let rapierReady: Promise<void> | undefined;
 
 async function ensureRapier(): Promise<void> {
@@ -40,14 +53,20 @@ export class PhysicsWorld {
     this.eventQueue = new RAPIER.EventQueue(true);
     const g = gameBalance.physics.gravity;
     this.world.gravity = { x: g[0], y: g[1], z: g[2] };
-    this.world.integrationParameters.dt = 1 / gameBalance.physics.fixedTimestepHz;
+    const ip = this.world.integrationParameters;
+    ip.dt = 1 / gameBalance.physics.fixedTimestepHz;
+    ip.numSolverIterations = SOLVER_ITERATIONS;
+    ip.numAdditionalFrictionIterations = FRICTION_ITERATIONS;
   }
 
   static async create(): Promise<PhysicsWorld> {
     await ensureRapier();
     const g = gameBalance.physics.gravity;
     const world = new RAPIER.World({ x: g[0], y: g[1], z: g[2] });
-    world.integrationParameters.dt = 1 / gameBalance.physics.fixedTimestepHz;
+    const ip = world.integrationParameters;
+    ip.dt = 1 / gameBalance.physics.fixedTimestepHz;
+    ip.numSolverIterations = SOLVER_ITERATIONS;
+    ip.numAdditionalFrictionIterations = FRICTION_ITERATIONS;
     return new PhysicsWorld(world);
   }
 

@@ -23,6 +23,7 @@ import { Renderer } from './render/Renderer';
 import { ResizeManager } from './render/ResizeManager';
 import { TrayMeshes } from './render/TrayMeshes';
 import { ValuableMeshes } from './render/ValuableMeshes';
+import { CongratsOverlay } from './ui/CongratsOverlay';
 import { DropSlotButtons } from './ui/DropSlotButtons';
 import { GameOverOverlay } from './ui/GameOverOverlay';
 import { HomeScreen } from './ui/HomeScreen';
@@ -131,20 +132,22 @@ async function main(): Promise<void> {
   shoveMeter.hide();
   const shoveGesture = new ShoveGesture(coinPool, audio, renderer, shoveMeter);
 
+  const startFreshSession = (): void => {
+    for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
+    for (const slot of [...valuablePool.active()]) valuablePool.releaseByIndex(slot.index);
+    winZone.reset();
+    confetti.reset();
+    saveStore.clear();
+    state.beginFreshSession();
+    tray.placeValuables(valuablePool);
+    resetAudioArming();
+    const prefill = tray.prefillCoins(coinPool);
+    window.setTimeout(prefill.startRain, prefill.rainDelayMs);
+    prefillBinToBank(state.coinBank);
+  };
+
   const gameOver = new GameOverOverlay(overlay, {
-    onPlayAgain() {
-      for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
-      for (const slot of [...valuablePool.active()]) valuablePool.releaseByIndex(slot.index);
-      winZone.reset();
-      confetti.reset();
-      saveStore.clear();
-      state.beginFreshSession();
-      tray.placeValuables(valuablePool);
-      resetAudioArming();
-      const prefill = tray.prefillCoins(coinPool);
-      window.setTimeout(prefill.startRain, prefill.rainDelayMs);
-      prefillBinToBank(state.coinBank);
-    },
+    onPlayAgain: startFreshSession,
     onContinue() {
       const previousBank = state.coinBank;
       state.applyContinueTopUp();
@@ -153,6 +156,11 @@ async function main(): Promise<void> {
     },
   });
   gameOver.attach(state);
+
+  const congrats = new CongratsOverlay(overlay, {
+    onPlayAgain: startFreshSession,
+  });
+  congrats.attach(state);
 
   loop.onPreStep((stepMs) => {
     pusher.update(stepMs);

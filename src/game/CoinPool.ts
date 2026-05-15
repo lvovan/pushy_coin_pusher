@@ -14,8 +14,15 @@ import type { PhysicsWorld } from './PhysicsWorld';
 const PARK_Y = -100; // off-screen storage Y for inactive coins (impl detail)
 const HALF = 0.5;
 const REST_VELOCITY_EPSILON = 0.001;
-const LINEAR_DAMPING = 0.1;
-const ANGULAR_DAMPING = 0.2;
+// Damping bumped from 0.1/0.2 to drain the residual micro-velocity that
+// the constraint solver injects when coins pile up against the pusher
+// and tray walls. Kept moderate on purpose: pushing it too high makes
+// stacks feel unnaturally "sticky" and (paradoxically) more jittery,
+// because the pusher's kinematic motion still nudges coins each stroke
+// while the high damping freezes them between strokes, exaggerating the
+// step-wise look.
+const LINEAR_DAMPING = 0.3;
+const ANGULAR_DAMPING = 0.6;
 
 export interface CoinSlot {
   active: boolean;
@@ -69,9 +76,8 @@ export class CoinPool {
     slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     slot.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
-    // Reset gravity scale to the default — tower coins set this to 0 and
-    // we don't want that to bleed into a slot reused later for a regular
-    // coin drop or scatter rain coin.
+    // Reset gravity scale to the default in case a previous owner of this
+    // slot tweaked it.
     slot.body.setGravityScale(1, true);
     slot.body.wakeUp();
     return slot;
