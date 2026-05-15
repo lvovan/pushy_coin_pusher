@@ -49,6 +49,11 @@ export interface GameBalance {
     readonly wallHeight: number;
     readonly winZoneDepth: number;
   };
+  readonly bin: {
+    readonly depth: number;
+    readonly floorY: number;
+    readonly wallHeight: number;
+  };
   readonly valuables: {
     readonly initialCount: number;
     readonly placementSeed: number;
@@ -67,6 +72,7 @@ export interface GameBalance {
   };
   readonly render: {
     readonly coinColor: number;
+    readonly coinSideColor: number;
     readonly coinMetalness: number;
     readonly coinRoughness: number;
     readonly valuableColors: readonly [number, number, number];
@@ -89,7 +95,7 @@ export const gameBalance: GameBalance = Object.freeze({
   spawning: Object.freeze({
     coinsPerTap: 1,
     perSlotCooldownMs: 250,
-    slotPositionsX: Object.freeze([-0.2, 0, 0.2]) as readonly [number, number, number],
+    slotPositionsX: Object.freeze([-0.133, 0, 0.133]) as readonly [number, number, number],
     slotSpawnJitter: 0.01,
     initialPileCount: 325,
   }),
@@ -102,19 +108,24 @@ export const gameBalance: GameBalance = Object.freeze({
     gravity: Object.freeze([0, -9.81, 0]) as readonly [number, number, number],
     fixedTimestepHz: 60,
     coinMass: 0.008,
-    coinFriction: 0.5,
+    coinFriction: 0.9,
     coinRestitution: 0.05,
     coinRadius: 0.018,
-    coinThickness: 0.003,
+    coinThickness: 0.0045,
     valuableMassMultipliers: Object.freeze([0.5, 1.0, 2.0]) as readonly [number, number, number],
-    valuableFriction: 0.6,
+    valuableFriction: 0.95,
     valuableRestitution: 0.15,
   }),
   tray: Object.freeze({
-    width: 0.6,
+    width: 0.4,
     depth: 0.5,
     wallHeight: 0.05,
     winZoneDepth: 0.05,
+  }),
+  bin: Object.freeze({
+    depth: 0.25,
+    floorY: -0.2,
+    wallHeight: 0.08,
   }),
   valuables: Object.freeze({
     initialCount: 6,
@@ -133,9 +144,10 @@ export const gameBalance: GameBalance = Object.freeze({
     maxActiveValuables: 16,
   }),
   render: Object.freeze({
-    coinColor: 0xffd24a,
-    coinMetalness: 0.9,
-    coinRoughness: 0.25,
+    coinColor: 0xffc83a,
+    coinSideColor: 0x3a2410,
+    coinMetalness: 1.0,
+    coinRoughness: 0.18,
     valuableColors: Object.freeze([0xff5050, 0xffe14a, 0x4aa3ff]) as readonly [
       number,
       number,
@@ -145,7 +157,7 @@ export const gameBalance: GameBalance = Object.freeze({
     trayColor: 0x2c3038,
     wallColor: 0x3a4049,
     backgroundColor: 0x0b0d10,
-    ambientIntensity: 0.5,
-    directionalIntensity: 0.9,
+    ambientIntensity: 0.35,
+    directionalIntensity: 1.6,
   }),
 });

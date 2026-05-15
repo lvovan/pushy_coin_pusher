@@ -24,6 +24,7 @@ export class AudioBus {
   private coinDropBuffer: AudioBuffer | undefined;
   private clinkBuffer: AudioBuffer | undefined;
   private gain: GainNode | undefined;
+  private muted = false;
 
   private bucket: number;
   private lastRefillMs: number;
@@ -46,7 +47,7 @@ export class AudioBus {
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.gain = this.ctx.createGain();
-      this.gain.gain.value = gameBalance.audio.coinDropVolume;
+      this.gain.gain.value = this.muted ? 0 : gameBalance.audio.coinDropVolume;
       this.gain.connect(this.ctx.destination);
       const coinUrl = this.options.coinDropUrl ?? '/audio/coin-drop.ogg';
       const clinkUrl = this.options.clinkUrl ?? '/audio/clink.ogg';
@@ -66,15 +67,31 @@ export class AudioBus {
     }
   }
 
-  playCoinDrop(): void {
-    this.playBuffer(this.coinDropBuffer, PITCH_BASE);
+  /** Returns the current mute state. */
+  get isMuted(): boolean {
+    return this.muted;
   }
 
-  /** Throttled via token bucket (Phase 0 R8). */
-  playClink(nowMs: number = performance.now()): void {
+  /** Mute or unmute the master output. Persists across calls; takes effect
+   * immediately on the master GainNode. */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (this.gain) {
+      this.gain.gain.value = muted ? 0 : gameBalance.audio.coinDropVolume;
+    }
+  }
+
+  playCoinDrop(): void {
+    // User-action sound — always play, bypassing the concurrency cap so a
+    // burst of physics clinks can never silently swallow the drop tap response.
+    this.playBuffer(this.coinDropBuffer, PITCH_BASE, PITCH_BASE, true);
+  }
+
+  /** Throttled via token bucket (Phase 0 R8). `volume` scales this call only (0..1). */
+  playClink(nowMs: number = performance.now(), volume: number = PITCH_BASE): void {
     if (!this.refill(nowMs)) return;
     const variance = (Math.random() * TWO - 1) * PITCH_VARIANCE;
-    this.playBuffer(this.clinkBuffer, PITCH_BASE + variance);
+    this.playBuffer(this.clinkBuffer, PITCH_BASE + variance, volume);
   }
 
   private refill(nowMs: number): boolean {
@@ -99,15 +116,28 @@ export class AudioBus {
     }
   }
 
-  private playBuffer(buf: AudioBuffer | undefined, playbackRate: number): void {
+  private playBuffer(
+    buf: AudioBuffer | undefined,
+    playbackRate: number,
+    volume: number = PITCH_BASE,
+    bypassCap: boolean = false,
+  ): void {
     if (!this.ctx || !this.gain || !buf) return;
     // Hard cap on overlapping sources so a burst of physics contacts at startup
-    // cannot queue minutes of audio. Extras are dropped silently.
-    if (this.activeSources >= MAX_CONCURRENT_SOURCES) return;
+    // cannot queue minutes of audio. Extras are dropped silently. `bypassCap`
+    // is set for user-action sounds (slot-tap drop) so they always play.
+    if (!bypassCap && this.activeSources >= MAX_CONCURRENT_SOURCES) return;
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = playbackRate;
-    src.connect(this.gain);
+    let tail: AudioNode = src;
+    if (volume !== PITCH_BASE) {
+      const perCallGain = this.ctx.createGain();
+      perCallGain.gain.value = volume;
+      src.connect(perCallGain);
+      tail = perCallGain;
+    }
+    tail.connect(this.gain);
     this.activeSources += 1;
     src.onended = () => {
       this.activeSources = Math.max(0, this.activeSources - 1);

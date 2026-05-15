@@ -20,7 +20,7 @@ export class DropSlots {
   constructor(
     private readonly state: GameState,
     private readonly coinPool: CoinPool,
-    private readonly onSpawn?: () => void,
+    private readonly onSpawn?: (spawnedCount: number) => void,
   ) {}
 
   tapSlot(id: SlotId, nowMs: number): boolean {
@@ -44,7 +44,7 @@ export class DropSlots {
       s.coinBank -= gameBalance.economy.dropCostPerCoin * spawned;
       s.slots[id]!.nextReadyAtMs = nowMs + gameBalance.spawning.perSlotCooldownMs;
     });
-    this.onSpawn?.();
+    this.onSpawn?.(spawned);
     return true;
   }
 }

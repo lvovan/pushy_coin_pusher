@@ -19,20 +19,30 @@ const WIN_SENSOR_HANDLE = 999;
 
 class FakeCoinPool {
   private readonly slots = new Map<number, CoinSlot>();
+  private readonly translations = new Map<number, { x: number; y: number; z: number }>();
 
   add(colliderHandle: number, x = 0, y = 0): CoinSlot {
+    const pos = { x, y, z: 0 };
+    this.translations.set(colliderHandle, pos);
     const slot: CoinSlot = {
       active: true,
       index: colliderHandle,
       bodyHandle: colliderHandle,
       colliderHandle,
       body: {
-        translation: () => ({ x, y, z: 0 }),
-        // unused in these tests
+        translation: () => this.translations.get(colliderHandle)!,
       } as unknown as CoinSlot['body'],
     };
     this.slots.set(colliderHandle, slot);
     return slot;
+  }
+
+  setPosition(handle: number, x: number, y: number): void {
+    const pos = this.translations.get(handle);
+    if (pos) {
+      pos.x = x;
+      pos.y = y;
+    }
   }
 
   findByColliderHandle(handle: number): CoinSlot | undefined {
@@ -60,6 +70,7 @@ function fakeTray(): Tray {
     floorY: 0,
     sideLossY: -0.5,
     sideLossMargin: 0.05,
+    binFloorY: gameBalance.bin.floorY,
     isOutOfPlay(x: number, y: number) {
       if (y < -0.5) return true;
       if (Math.abs(x) > gameBalance.tray.width / 2 + 0.05) return true;
@@ -69,11 +80,12 @@ function fakeTray(): Tray {
 }
 
 describe('WinZone — sensor handling (FR-003, FR-013)', () => {
-  it('credits bank when a coin enters the win sensor', () => {
+  it('credits bank immediately when an awarded coin crosses the win sensor', () => {
     const state = new GameState();
     state.beginFreshSession();
     const pool = new FakeCoinPool();
-    const coin = pool.add(42);
+    // Coin is still on the tray (y = 0) when it enters the sensor.
+    const coin = pool.add(42, 0, 0);
     const wz = new WinZone(fakeTray(), pool as unknown as CoinPool, state);
 
     const before = state.coinBank;
@@ -83,9 +95,25 @@ describe('WinZone — sensor handling (FR-003, FR-013)', () => {
       started: true,
     } satisfies SensorEvent);
 
+    // Sensor crossing credits the bank right away; the body keeps falling as
+    // a normal physics object so the player sees a continuous trajectory.
     expect(consumed).toBe(true);
     expect(state.coinBank).toBe(before + gameBalance.economy.winValuePerCoin);
-    expect(coin.active).toBe(false);
+    expect(coin.active).toBe(true);
+
+    // The body has not been released — the bin holds it as a real physics
+    // object until it either rests in the bin or escapes out of play.
+    const removed = wz.stepSideFallOff();
+    expect(removed).toBe(0);
+    expect(coin.active).toBe(true);
+
+    // Re-entering the sensor (e.g. via a bounce) must not double-credit.
+    wz.handleSensor({
+      sensorHandle: WIN_SENSOR_HANDLE,
+      otherHandle: coin.colliderHandle,
+      started: true,
+    } satisfies SensorEvent);
+    expect(state.coinBank).toBe(before + gameBalance.economy.winValuePerCoin);
   });
 
   it('ignores exit events and non-coin handles', () => {
@@ -109,7 +137,7 @@ describe('WinZone — sensor handling (FR-003, FR-013)', () => {
     const state = new GameState();
     state.beginFreshSession();
     const pool = new FakeCoinPool();
-    pool.add(1, 999, 0); // far off the side
+    pool.add(1, 999, 0); // far off the side — never crossed the win sensor
     pool.add(2, 0, 0); // safely on tray
     const wz = new WinZone(fakeTray(), pool as unknown as CoinPool, state);
 

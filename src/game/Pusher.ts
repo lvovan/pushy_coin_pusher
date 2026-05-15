@@ -15,6 +15,13 @@ const PUSHER_DEPTH = 0.45; // deep enough that the back stays behind the back wa
 const PUSHER_HEIGHT = 0.025; // taller than a coin so coins can't slide over it
 const PUSHER_WIDTH_MARGIN = 0.04;
 const PUSHER_FLOOR_EMBED = 0.005; // sink the bottom face below the floor so coins can never slip under
+// Slanted retaining lip along the pusher's leading (front) edge: a thin
+// back-tilted ramp on top of the pusher so coins sitting on it resist
+// sliding forward and falling off into the bin. Mirrors a real arcade
+// coin-pusher's raised front rim.
+const PUSHER_LIP_DEPTH = 0.012;
+const PUSHER_LIP_THICKNESS = 0.004;
+const PUSHER_LIP_SLANT_RAD = 0.26; // ~15°
 const TWO_PI = Math.PI * 2;
 const COS_OFFSET = 1;
 const STROKE_HALF = 0.5;
@@ -40,6 +47,24 @@ export class Pusher {
     ).setFriction(gameBalance.physics.coinFriction);
     const col = world.world.createCollider(colDesc, this.body);
     this.handle = col.handle;
+
+    // Pusher front lip — small slanted ramp on top of the pusher's leading
+    // edge that moves rigidly with the kinematic body (child collider).
+    const lipSinH = Math.sin(PUSHER_LIP_SLANT_RAD * 0.5);
+    const lipCosH = Math.cos(PUSHER_LIP_SLANT_RAD * 0.5);
+    const lipDesc = RAPIER.ColliderDesc.cuboid(
+      halfWidth,
+      PUSHER_LIP_THICKNESS * STROKE_HALF,
+      PUSHER_LIP_DEPTH * STROKE_HALF,
+    )
+      .setTranslation(
+        0,
+        PUSHER_HEIGHT * STROKE_HALF + PUSHER_LIP_THICKNESS * STROKE_HALF,
+        PUSHER_DEPTH * STROKE_HALF - PUSHER_LIP_DEPTH * STROKE_HALF,
+      )
+      .setRotation({ x: -lipSinH, y: 0, z: 0, w: lipCosH })
+      .setFriction(gameBalance.physics.coinFriction);
+    world.world.createCollider(lipDesc, this.body);
   }
 
   update(dtMs: number): void {

@@ -12,6 +12,10 @@ const PUSHER_DEPTH = 0.45;
 const PUSHER_HEIGHT = 0.025;
 const PUSHER_WIDTH_MARGIN = 0.04;
 const PUSHER_FLOOR_EMBED = 0.005;
+// Must match Pusher.ts (game) — visual lip atop the pusher's front edge.
+const PUSHER_LIP_DEPTH = 0.012;
+const PUSHER_LIP_THICKNESS = 0.004;
+const PUSHER_LIP_SLANT_RAD = 0.26;
 
 export class PusherMesh {
   readonly mesh: THREE.Mesh;
@@ -26,6 +30,18 @@ export class PusherMesh {
     });
     this.mesh = new THREE.Mesh(geom, mat);
     this.mesh.position.set(0, PUSHER_HEIGHT * HALF - PUSHER_FLOOR_EMBED, gameBalance.pusher.basePositionZ);
+
+    // Front-edge lip — child mesh, moves with the pusher.
+    const lipGeom = new THREE.BoxGeometry(width, PUSHER_LIP_THICKNESS, PUSHER_LIP_DEPTH);
+    const lipMesh = new THREE.Mesh(lipGeom, mat);
+    lipMesh.position.set(
+      0,
+      PUSHER_HEIGHT * HALF + PUSHER_LIP_THICKNESS * HALF,
+      PUSHER_DEPTH * HALF - PUSHER_LIP_DEPTH * HALF,
+    );
+    lipMesh.rotation.x = -PUSHER_LIP_SLANT_RAD;
+    this.mesh.add(lipMesh);
+
     scene.add(this.mesh);
   }
 

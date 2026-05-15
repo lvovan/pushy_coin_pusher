@@ -56,15 +56,16 @@ class FakeValuablePool {
   }
 }
 
-function makeFakeTray(): Tray {
+function makeFakeTray(outOfPlay: boolean): Tray {
   return {
     handles: { winZoneSensorHandle: WIN_SENSOR_HANDLE },
-    isOutOfPlay: () => false,
+    binFloorY: -10,
+    isOutOfPlay: () => outOfPlay,
   } as unknown as Tray;
 }
 
 describe('WinZone — valuable handling (US3)', () => {
-  it('increments valuablesCollected, leaves coinBank unchanged', () => {
+  it('increments valuablesCollected immediately on sensor crossing', () => {
     const state = new GameState();
     state.beginFreshSession();
     const bankBefore = state.coinBank;
@@ -72,8 +73,9 @@ describe('WinZone — valuable handling (US3)', () => {
     const coins = new FakeCoinPool();
     const valuables = new FakeValuablePool();
     const v = valuables.add(77, 1);
+    const tray = makeFakeTray(false);
     const wz = new WinZone(
-      makeFakeTray(),
+      tray,
       coins as unknown as CoinPool,
       state,
       valuables as unknown as ValuablePool,
@@ -86,24 +88,31 @@ describe('WinZone — valuable handling (US3)', () => {
       started: true,
     } satisfies SensorEvent);
 
+    // Credit is immediate and the body stays alive so the player sees it
+    // continue into the bin as a normal physics object.
     expect(consumed).toBe(true);
     expect(state.valuablesCollected).toBe(1);
     expect(state.coinBank).toBe(bankBefore);
-    expect(v.active).toBe(false);
+    expect(v.active).toBe(true);
+
+    // Re-entering the sensor (e.g. a bounce) must not double-credit.
+    wz.handleSensor({
+      sensorHandle: WIN_SENSOR_HANDLE,
+      otherHandle: v.colliderHandle,
+      started: true,
+    } satisfies SensorEvent);
+    expect(state.valuablesCollected).toBe(1);
   });
 
-  it('ignores side fall-off for valuables (no counter change)', () => {
+  it('side fall-off releases uncredited valuables without changing the counter', () => {
     const state = new GameState();
     state.beginFreshSession();
     const before = state.valuablesCollected;
     const coins = new FakeCoinPool();
     const valuables = new FakeValuablePool();
     valuables.add(88, 2);
-    // Tray says everything is OUT of play → side fall-off path triggers.
-    const tray = {
-      handles: { winZoneSensorHandle: WIN_SENSOR_HANDLE },
-      isOutOfPlay: () => true,
-    } as unknown as Tray;
+    // Tray says everything is OUT of play → side fall-off releases the body.
+    const tray = makeFakeTray(true);
     const wz = new WinZone(
       tray,
       coins as unknown as CoinPool,

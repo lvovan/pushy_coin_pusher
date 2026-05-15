@@ -1,7 +1,9 @@
 /**
- * DropSlotButtons — three narrow tap-zones positioned over the canvas, one per
- * coin column. Each zone projects the world-space drop point onto the screen
- * so the button visually marks exactly where coins will appear.
+ * DropSlotButtons — three full-height tap zones spanning the viewport, one per
+ * coin column. A small visual marker sits at the top of each zone showing the
+ * projected world-space drop point so players still see where coins will
+ * appear; the tap zone itself extends from the top of the screen to the
+ * bottom, so a press anywhere in a column triggers its slot.
  *
  * Press-and-hold (mouse or touch) produces a continuous flow of drops: while
  * pressed, `DropSlots.tapSlot()` is invoked every animation frame.
@@ -23,7 +25,8 @@ const SLOT_PROJECT_Y = 0;
 
 interface SlotEntry {
   readonly id: SlotId;
-  readonly button: HTMLButtonElement;
+  readonly zone: HTMLButtonElement;
+  readonly marker: HTMLDivElement;
   readonly worldX: number;
   pressed: boolean;
   rafId: number;
@@ -40,17 +43,26 @@ export class DropSlotButtons {
 
     for (let i = 0; i < SLOT_COUNT; i += 1) {
       const id = i as SlotId;
-      const button = document.createElement('button');
-      button.className = 'drop-slot';
-      button.setAttribute('data-slot', String(i));
-      button.setAttribute('aria-label', `Drop slot ${i + 1}`);
-      button.style.width = `${SLOT_WIDTH_PX}px`;
-      button.style.height = `${SLOT_HEIGHT_PX}px`;
-      this.root.appendChild(button);
+
+      // Full-height invisible tap zone — catches presses anywhere in column.
+      const zone = document.createElement('button');
+      zone.className = 'drop-slot-zone';
+      zone.setAttribute('data-slot-zone', String(i));
+      zone.setAttribute('aria-label', `Drop slot ${i + 1}`);
+      this.root.appendChild(zone);
+
+      // Small visual marker projected onto the world-space spawn point.
+      const marker = document.createElement('div');
+      marker.className = 'drop-slot';
+      marker.setAttribute('data-slot', String(i));
+      marker.style.width = `${SLOT_WIDTH_PX}px`;
+      marker.style.height = `${SLOT_HEIGHT_PX}px`;
+      this.root.appendChild(marker);
 
       const entry: SlotEntry = {
         id,
-        button,
+        zone,
+        marker,
         worldX: gameBalance.spawning.slotPositionsX[i] ?? 0,
         pressed: false,
         rafId: 0,
@@ -71,6 +83,7 @@ export class DropSlotButtons {
     const stop = (): void => {
       if (!entry.pressed) return;
       entry.pressed = false;
+      entry.marker.classList.remove('is-pressed');
       if (entry.rafId !== 0) {
         cancelAnimationFrame(entry.rafId);
         entry.rafId = 0;
@@ -87,28 +100,37 @@ export class DropSlotButtons {
       e.preventDefault();
       if (entry.pressed) return;
       entry.pressed = true;
-      entry.button.setPointerCapture?.(e.pointerId);
+      entry.marker.classList.add('is-pressed');
+      entry.zone.setPointerCapture?.(e.pointerId);
       drops.tapSlot(entry.id, performance.now());
       entry.rafId = requestAnimationFrame(tick);
     };
 
-    entry.button.addEventListener('pointerdown', start);
-    entry.button.addEventListener('pointerup', stop);
-    entry.button.addEventListener('pointercancel', stop);
-    entry.button.addEventListener('pointerleave', stop);
-    entry.button.addEventListener('lostpointercapture', stop);
-    entry.button.addEventListener('contextmenu', (e) => e.preventDefault());
+    entry.zone.addEventListener('pointerdown', start);
+    entry.zone.addEventListener('pointerup', stop);
+    entry.zone.addEventListener('pointercancel', stop);
+    entry.zone.addEventListener('pointerleave', stop);
+    entry.zone.addEventListener('lostpointercapture', stop);
+    entry.zone.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   private layout(renderer: Renderer): void {
     const width = window.innerWidth;
+    const zoneWidth = width / SLOT_COUNT;
     const v = new THREE.Vector3();
-    for (const entry of this.slots) {
+    for (let i = 0; i < this.slots.length; i += 1) {
+      const entry = this.slots[i];
+      // Full-height tap zone: one of three equal vertical columns spanning the
+      // entire viewport. Pressing anywhere in a column triggers its slot.
+      entry.zone.style.left = `${zoneWidth * i}px`;
+      entry.zone.style.width = `${zoneWidth}px`;
+
+      // Visual marker stays anchored to the projected world-space spawn point.
       v.set(entry.worldX, SLOT_PROJECT_Y, SLOT_PROJECT_Z);
       v.project(renderer.camera);
       const px = (v.x + 1) * 0.5 * width;
-      entry.button.style.left = `${px - SLOT_WIDTH_PX * 0.5}px`;
-      entry.button.style.top = `${SLOT_TOP_OFFSET_PX}px`;
+      entry.marker.style.left = `${px - SLOT_WIDTH_PX * 0.5}px`;
+      entry.marker.style.top = `${SLOT_TOP_OFFSET_PX}px`;
     }
   }
 

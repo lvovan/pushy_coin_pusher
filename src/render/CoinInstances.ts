@@ -33,12 +33,25 @@ export class CoinInstances {
       gameBalance.physics.coinThickness,
       CYLINDER_SEGMENTS,
     );
-    const mat = new THREE.MeshStandardMaterial({
+    // CylinderGeometry produces three groups: [0]=side wall, [1]=top cap,
+    // [2]=bottom cap. We give the side wall a darker, more matte tone so
+    // stacked coins show clear dark seams between every top face — the
+    // silhouette/outline effect the player needs to count coins in a stack.
+    const faceMat = new THREE.MeshStandardMaterial({
       color: gameBalance.render.coinColor,
       metalness: gameBalance.render.coinMetalness,
       roughness: gameBalance.render.coinRoughness,
     });
-    this.mesh = new THREE.InstancedMesh(geom, mat, gameBalance.limits.maxActiveCoins);
+    const sideMat = new THREE.MeshStandardMaterial({
+      color: gameBalance.render.coinSideColor,
+      metalness: gameBalance.render.coinMetalness * gameBalance.render.coinRoughness,
+      roughness: COIN_BASE_SCALE - gameBalance.render.coinRoughness,
+    });
+    this.mesh = new THREE.InstancedMesh(
+      geom,
+      [sideMat, faceMat, faceMat],
+      gameBalance.limits.maxActiveCoins,
+    );
     this.mesh.frustumCulled = false;
     this.tmpScale.set(ZERO_SCALE, ZERO_SCALE, ZERO_SCALE);
     this.tmpPos.set(ZERO_SCALE, ZERO_SCALE, ZERO_SCALE);

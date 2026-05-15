@@ -15,9 +15,16 @@ const HALF = 0.5;
 const WALL_THICKNESS = 0.02; // physical wall thickness in meters; not gameplay-balance
 const SIDE_LOSS_MARGIN = 0.05;
 const SIDE_LOSS_Y = -0.5;
+// Slanted retaining lip along the plate's front (player-facing) edge. A real
+// arcade coin pusher has a slight upward rim here so coins resist falling
+// into the collection bin without being firmly pushed.
+const PLATE_LIP_DEPTH = 0.012;
+const PLATE_LIP_THICKNESS = 0.004;
+const PLATE_LIP_SLANT_RAD = 0.26; // ~15°
 
 export interface TrayHandles {
   floorHandle: number;
+  binFloorHandle: number;
   backWallHandle: number;
   leftWallHandle: number;
   rightWallHandle: number;
@@ -33,11 +40,15 @@ export class Tray {
   readonly floorY = 0;
   readonly sideLossY = SIDE_LOSS_Y;
   readonly sideLossMargin = SIDE_LOSS_MARGIN;
+  // Top surface of the physical bin floor; awarded coins are released when
+  // they settle here so the player sees them land in the bin.
+  readonly binFloorY: number;
 
   constructor(world: PhysicsWorld) {
-    const { tray } = gameBalance;
+    const { tray, bin } = gameBalance;
     this.halfWidth = tray.width * HALF;
     this.halfDepth = tray.depth * HALF;
+    this.binFloorY = bin.floorY;
 
     const floorBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const floorCol = world.world.createCollider(
@@ -71,6 +82,26 @@ export class Tray {
       rightBody,
     );
 
+    // Plate front lip: a thin slanted ramp at the plate's front edge, tilted
+    // ~15° front-up. Coins must overcome a small upward step to fall into the
+    // collection bin, mirroring the rim on a real arcade coin pusher's plate.
+    const plateLipSinH = Math.sin(PLATE_LIP_SLANT_RAD * HALF);
+    const plateLipCosH = Math.cos(PLATE_LIP_SLANT_RAD * HALF);
+    const plateLipBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    plateLipBody.setTranslation(
+      { x: 0, y: PLATE_LIP_THICKNESS * HALF, z: this.halfDepth - PLATE_LIP_DEPTH * HALF },
+      true,
+    );
+    plateLipBody.setRotation({ x: -plateLipSinH, y: 0, z: 0, w: plateLipCosH }, true);
+    world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(
+        this.halfWidth,
+        PLATE_LIP_THICKNESS * HALF,
+        PLATE_LIP_DEPTH * HALF,
+      ).setFriction(gameBalance.physics.coinFriction),
+      plateLipBody,
+    );
+
     // Win zone: sensor cuboid placed just past the front edge.
     const sensorBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     sensorBody.setTranslation(
@@ -84,8 +115,68 @@ export class Tray {
       sensorBody,
     );
 
+    // Bin: physical floor + perimeter walls so awarded coins land inside the
+    // collection bin instead of falling through into the void. The bin spans
+    // the FULL footprint of the play tray (z=-halfDepth..+halfDepth) and
+    // extends further forward by `bin.depth` toward the player, so any coin
+    // that falls below the plate — whether off the front edge, by side
+    // clipping, or after a sideways bounce — has a physical surface to land
+    // on instead of disappearing into the void.
+    const binBackZ = -this.halfDepth;
+    const binFrontZ = this.halfDepth + bin.depth;
+    const binFullDepth = binFrontZ - binBackZ;
+    const binCenterZ = (binBackZ + binFrontZ) * HALF;
+    const binFloorBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    binFloorBody.setTranslation(
+      { x: 0, y: bin.floorY - WALL_THICKNESS * HALF, z: binCenterZ },
+      true,
+    );
+    const binFloorCol = world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(this.halfWidth, WALL_THICKNESS * HALF, binFullDepth * HALF).setFriction(
+        gameBalance.physics.coinFriction,
+      ),
+      binFloorBody,
+    );
+
+    const binWallHalfY = bin.wallHeight * HALF;
+    const binWallCenterY = bin.floorY + binWallHalfY;
+    const binFrontBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    binFrontBody.setTranslation(
+      { x: 0, y: binWallCenterY, z: binFrontZ - WALL_THICKNESS * HALF },
+      true,
+    );
+    world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(this.halfWidth, binWallHalfY, WALL_THICKNESS * HALF),
+      binFrontBody,
+    );
+
+    const binBackBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    binBackBody.setTranslation(
+      { x: 0, y: binWallCenterY, z: binBackZ + WALL_THICKNESS * HALF },
+      true,
+    );
+    world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(this.halfWidth, binWallHalfY, WALL_THICKNESS * HALF),
+      binBackBody,
+    );
+
+    const binLeftBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    binLeftBody.setTranslation({ x: -this.halfWidth, y: binWallCenterY, z: binCenterZ }, true);
+    world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(WALL_THICKNESS * HALF, binWallHalfY, binFullDepth * HALF),
+      binLeftBody,
+    );
+
+    const binRightBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    binRightBody.setTranslation({ x: this.halfWidth, y: binWallCenterY, z: binCenterZ }, true);
+    world.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(WALL_THICKNESS * HALF, binWallHalfY, binFullDepth * HALF),
+      binRightBody,
+    );
+
     this.handles = {
       floorHandle: floorCol.handle,
+      binFloorHandle: binFloorCol.handle,
       backWallHandle: backCol.handle,
       leftWallHandle: leftCol.handle,
       rightWallHandle: rightCol.handle,
@@ -155,5 +246,37 @@ export class Tray {
       placed += 1;
     }
     return placed;
+  }
+
+  /**
+   * Spawn `count` coins inside the collection bin so the bin's physical coin
+   * count tracks the player's bank counter. Returns the spawned slot indices
+   * so callers (main.ts) can register them with WinZone.binCoins.
+   * Deterministic per `placementSeed + 3`.
+   */
+  prefillBin(coinPool: CoinPool, count: number): number[] {
+    const SEED_OFFSET = 3;
+    const rng: Rng = createRng(gameBalance.valuables.placementSeed + SEED_OFFSET);
+    const { bin } = gameBalance;
+    const MARGIN = 0.02;
+    const Y_LIFT = 0.02;
+    const Y_STACK = 0.15;
+    // Spawn only in the visible front portion of the bin (in front of the
+    // plate), so the pile the player sees represents their banked coins.
+    const xMin = -this.halfWidth + MARGIN;
+    const xMax = this.halfWidth - MARGIN;
+    const zMin = this.halfDepth + MARGIN;
+    const zMax = this.halfDepth + bin.depth - MARGIN;
+    const yBase = bin.floorY + Y_LIFT;
+    const indices: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const x = rng.range(xMin, xMax);
+      const z = rng.range(zMin, zMax);
+      const y = yBase + rng.next() * Y_STACK;
+      const coin = coinPool.spawn(x, y, z);
+      if (!coin) break;
+      indices.push(coin.index);
+    }
+    return indices;
   }
 }
