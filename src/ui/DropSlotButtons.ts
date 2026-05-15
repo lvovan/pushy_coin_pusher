@@ -9,10 +9,21 @@
  * `tapSlot` itself enforces `perSlotCooldownMs`, so the rate is implicitly
  * capped and the bank depletes naturally.
  */
+import * as THREE from 'three';
+
+import { gameBalance } from '../config/gameBalance';
 import type { DropSlots, SlotId } from '../game/DropSlots';
 import type { Renderer } from '../render/Renderer';
 
 const SLOT_COUNT = 3;
+// Fallback flash height (fraction of viewport height) used until the
+// projected back-wall position is known, e.g. before the camera has been
+// updated for the first time.
+const FLASH_HEIGHT_FALLBACK_FRAC = 0.4;
+// Floor of the projected flash height in pixels so a tiny computed value
+// (degenerate camera state on first frame, orientation change mid-render)
+// never collapses the overlay to invisibility.
+const FLASH_HEIGHT_MIN_PX = 80;
 
 interface SlotEntry {
   readonly id: SlotId;
@@ -26,8 +37,13 @@ export class DropSlotButtons {
   private readonly root: HTMLElement;
   private readonly slots: SlotEntry[] = [];
   private readonly onResize: () => void;
+  private readonly renderer: Renderer;
+  // Reusable Vector3 for back-wall world→screen projection so the layout
+  // pass doesn't allocate every resize/orientation event.
+  private readonly projection = new THREE.Vector3();
 
-  constructor(parent: HTMLElement, drops: DropSlots, _renderer: Renderer) {
+  constructor(parent: HTMLElement, drops: DropSlots, renderer: Renderer) {
+    this.renderer = renderer;
     this.root = document.createElement('div');
     this.root.className = 'drop-slots';
 
@@ -114,11 +130,35 @@ export class DropSlotButtons {
 
   private layout(): void {
     const width = window.innerWidth;
+    const height = window.innerHeight;
     const zoneWidth = width / SLOT_COUNT;
     for (let i = 0; i < this.slots.length; i += 1) {
       const entry = this.slots[i];
       entry.zone.style.left = `${zoneWidth * i}px`;
       entry.zone.style.width = `${zoneWidth}px`;
+    }
+    // Project the play-tray's back-wall top edge into screen space so the
+    // flash gradient fades out exactly where the wall is rendered. We use
+    // (x=0, y=floorY+wallHeight, z=-depth/2), i.e. the centre of the top
+    // of the back wall, because the camera is centred on x=0 so any X is
+    // equivalent for the Y projection. Three.js's `Vector3.project` maps
+    // world coords to NDC [-1, +1]; we convert NDC y → CSS pixel y from
+    // the top of the viewport.
+    const camera = this.renderer.camera;
+    const wallTopY = gameBalance.tray.wallHeight; // floorY is 0
+    const wallBackZ = -gameBalance.tray.depth / 2;
+    this.projection.set(0, wallTopY, wallBackZ);
+    this.projection.project(camera);
+    // NDC y in [-1, +1] → CSS pixel y from the top.
+    let flashHeightPx = ((1 - this.projection.y) / 2) * height;
+    if (!Number.isFinite(flashHeightPx) || flashHeightPx <= 0) {
+      flashHeightPx = height * FLASH_HEIGHT_FALLBACK_FRAC;
+    }
+    if (flashHeightPx < FLASH_HEIGHT_MIN_PX) flashHeightPx = FLASH_HEIGHT_MIN_PX;
+    if (flashHeightPx > height) flashHeightPx = height;
+    const flashHeightCss = `${flashHeightPx.toFixed(1)}px`;
+    for (const entry of this.slots) {
+      entry.flash.style.setProperty('--flash-height', flashHeightCss);
     }
   }
 

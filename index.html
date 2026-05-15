@@ -178,12 +178,27 @@
         touch-action: none;
         user-select: none;
         -webkit-user-select: none;
+        /* Suppress the iOS long-press callout / text-selection menu and the
+           Android tap highlight; the drop zone is a press-and-hold control,
+           not selectable content. */
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
         overflow: hidden;
       }
       .drop-slot-flash {
         position: absolute;
-        inset: 0;
-        background: rgba(255, 255, 255, 0.22);
+        top: 0;
+        left: 0;
+        right: 0;
+        /* Confine the flash to the upper region of the screen; fades to
+           transparent at the projected screen-height of the play-tray's
+           back wall (set by DropSlotButtons as `--flash-height`). */
+        height: var(--flash-height, 40%);
+        background: linear-gradient(
+          to bottom,
+          rgba(255, 255, 255, 0.11) 0%,
+          rgba(255, 255, 255, 0) 100%
+        );
         opacity: 0;
         pointer-events: none;
       }
