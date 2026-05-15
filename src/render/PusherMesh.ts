@@ -3,6 +3,9 @@
  * from the Rapier body each render so it tracks physics exactly.
  */
 import * as THREE from 'three';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
+import { Font } from 'three/examples/jsm/loaders/FontLoader.js';
+import helvetikerBoldFont from 'three/examples/fonts/helvetiker_bold.typeface.json';
 
 import { gameBalance } from '../config/gameBalance';
 import type { Pusher } from '../game/Pusher';
@@ -16,6 +19,26 @@ const PUSHER_FLOOR_EMBED = 0.005;
 const PUSHER_LIP_LENGTH = 0.05;
 const PUSHER_LIP_THICKNESS = 0.0015;
 const PUSHER_LIP_SLANT_RAD = 0.12;
+// "PUSHY" engraving on the back portion of the pusher's top face. Visual
+// only — no collider. Looks like an industrially stamped/cast-in brand
+// plate: very low relief, dark almost-black metal, slight bevel softening
+// the edges, high roughness so the shading reads as a recessed cavity
+// rather than a polished raised badge.
+const ENGRAVING_TEXT = 'PUSHY';
+const ENGRAVING_SIZE = 0.022;
+const ENGRAVING_HEIGHT = 0.0015;
+// Local Z places the text just in front of the tray's back wall (whose
+// inner face is at local Z ≈ +0.085 in pusher space), so it sits at the
+// very top of the visible pusher plate — "above the upward wall" from
+// the player's perspective.
+const ENGRAVING_LOCAL_Z = 0.1;
+const ENGRAVING_BEVEL_THICKNESS = 0.00025;
+const ENGRAVING_BEVEL_SIZE = 0.00025;
+const ENGRAVING_BEVEL_SEGMENTS = 2;
+const ENGRAVING_CURVE_SEGMENTS = 6;
+const ENGRAVING_COLOR = 0x0a0c0e;
+const ENGRAVING_METALNESS = 0.85;
+const ENGRAVING_ROUGHNESS = 0.55;
 
 export class PusherMesh {
   readonly mesh: THREE.Mesh;
@@ -56,6 +79,42 @@ export class PusherMesh {
     );
     lipMesh.rotation.x = -PUSHER_LIP_SLANT_RAD;
     this.mesh.add(lipMesh);
+
+    // Industrially-stamped "PUSHY" engraving on the back portion of the
+    // pusher's top face. TextGeometry is extruded along its local +Z then
+    // rotated -90° about X so the extrusion ends up pointing along world
+    // +Y (i.e. rising out of the pusher top). Centring the geometry first
+    // means the rotation pivots around the text's own bounding-box centre.
+    const font = new Font(helvetikerBoldFont);
+    const textGeom = new TextGeometry(ENGRAVING_TEXT, {
+      font,
+      size: ENGRAVING_SIZE,
+      // NOTE: TextGeometry's option is `height` (not `depth`). Internally
+      // it rewrites `parameters.depth = parameters.height ?? 50`, so a
+      // `depth` key is silently dropped and the extrusion defaults to 50
+      // metres — producing massive vertical columns instead of low relief.
+      height: ENGRAVING_HEIGHT,
+      curveSegments: ENGRAVING_CURVE_SEGMENTS,
+      bevelEnabled: true,
+      bevelThickness: ENGRAVING_BEVEL_THICKNESS,
+      bevelSize: ENGRAVING_BEVEL_SIZE,
+      bevelOffset: 0,
+      bevelSegments: ENGRAVING_BEVEL_SEGMENTS,
+    });
+    textGeom.center();
+    textGeom.rotateX(-Math.PI * HALF);
+    // After centring + rotation the geometry's Y extent is symmetric around
+    // 0 (range = ±ENGRAVING_HEIGHT/2). Shift Y so the bottom face sits flush
+    // on the pusher's top surface (local Y = +PUSHER_HEIGHT/2), then push
+    // the whole thing toward the back of the pusher in local Z.
+    textGeom.translate(0, PUSHER_HEIGHT * HALF + ENGRAVING_HEIGHT * HALF, ENGRAVING_LOCAL_Z);
+    const textMat = new THREE.MeshStandardMaterial({
+      color: ENGRAVING_COLOR,
+      metalness: ENGRAVING_METALNESS,
+      roughness: ENGRAVING_ROUGHNESS,
+    });
+    const textMesh = new THREE.Mesh(textGeom, textMat);
+    this.mesh.add(textMesh);
 
     scene.add(this.mesh);
   }

@@ -29,6 +29,7 @@ import { HomeScreen } from './ui/HomeScreen';
 import { Hud } from './ui/Hud';
 import { MuteButton } from './ui/MuteButton';
 import { ShoveGesture } from './ui/ShoveGesture';
+import { ShoveMeter } from './ui/ShoveMeter';
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('stage');
@@ -52,8 +53,14 @@ async function main(): Promise<void> {
   const armAudio = (): void => {
     audioArmed = true;
   };
+  // Track coin collider handles that have already played their bin-landing
+  // clink so micro-bounces in the settled bin pile don't retrigger the sound
+  // every frame (Rapier emits a fresh `started` collision event each time a
+  // jittering coin separates from and re-touches the bin floor).
+  const clinkedCoinHandles = new Set<number>();
   const resetAudioArming = (): void => {
     audioArmed = false;
+    clinkedCoinHandles.clear();
   };
 
   const physics = await PhysicsWorld.create();
@@ -71,6 +78,7 @@ async function main(): Promise<void> {
   const state = new GameState();
   const winZone = new WinZone(tray, coinPool, state, valuablePool, (x, y, z) => {
     confetti.burst(x, y, z);
+    if (audioArmed) audio.playValuable();
   });
 
   // Invariant: the number of physical coins inside the collection bin equals
@@ -119,7 +127,9 @@ async function main(): Promise<void> {
   // bump, the camera briefly shifts in the drag direction, and shove.ogg
   // plays. The gesture is tracked at the window level so it co-exists with
   // the drop-slot tap zones (tap = drop, press-and-drag = shove).
-  const shoveGesture = new ShoveGesture(coinPool, audio, renderer);
+  const shoveMeter = new ShoveMeter(overlay);
+  shoveMeter.hide();
+  const shoveGesture = new ShoveGesture(coinPool, audio, renderer, shoveMeter);
 
   const gameOver = new GameOverOverlay(overlay, {
     onPlayAgain() {
@@ -131,7 +141,8 @@ async function main(): Promise<void> {
       state.beginFreshSession();
       tray.placeValuables(valuablePool);
       resetAudioArming();
-      tray.prefillCoins(coinPool);
+      const prefill = tray.prefillCoins(coinPool);
+      window.setTimeout(prefill.startRain, prefill.rainDelayMs);
       prefillBinToBank(state.coinBank);
     },
     onContinue() {
@@ -175,6 +186,8 @@ async function main(): Promise<void> {
     if (!coin) return;
     const otherHandle = c.handleA === coin.colliderHandle ? c.handleB : c.handleA;
     if (otherHandle === tray.handles.binFloorHandle) {
+      if (clinkedCoinHandles.has(coin.colliderHandle)) return;
+      clinkedCoinHandles.add(coin.colliderHandle);
       audio.playClink();
     }
   });
@@ -184,6 +197,7 @@ async function main(): Promise<void> {
     valuableMeshes.syncRender(valuablePool, alpha);
     confetti.update(dtMs);
     shoveGesture.update(dtMs);
+    shoveMeter.update(dtMs);
   });
 
   // Coins that win at the front sensor stay as physics bodies and pile up
@@ -193,6 +207,9 @@ async function main(): Promise<void> {
   state.subscribe((s) => {
     if (s.mode === 'playing') slotButtons.show();
     else slotButtons.hide();
+  });
+  state.subscribe((s) => {
+    trayMeshes.setCoinCount(s.coinBank);
   });
 
   const existingSave = saveStore.load();
@@ -208,10 +225,12 @@ async function main(): Promise<void> {
       state.beginFreshSession();
       tray.placeValuables(valuablePool);
       resetAudioArming();
-      tray.prefillCoins(coinPool);
+      const prefill = tray.prefillCoins(coinPool);
+      window.setTimeout(prefill.startRain, prefill.rainDelayMs);
       prefillBinToBank(state.coinBank);
       home.hide();
       hud.show();
+      shoveMeter.show();
       loop.start();
     },
     onResume() {
@@ -228,6 +247,7 @@ async function main(): Promise<void> {
       prefillBinToBank(state.coinBank);
       home.hide();
       hud.show();
+      shoveMeter.show();
       loop.start();
     },
   });

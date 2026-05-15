@@ -26,8 +26,26 @@ const BIN_WALL_COLOR = 0x2a1808;
 const BIN_MATTE_METALNESS = 0;
 const BIN_MATTE_ROUGHNESS = 1;
 
+// Embossed coin-count label on the front face of the bin.
+const COUNT_LABEL_WIDTH_RATIO = 0.7; // fraction of bin front-wall width
+const COUNT_LABEL_HEIGHT_RATIO = 0.75; // fraction of bin front-wall height
+const COUNT_LABEL_Z_OFFSET = 0.0008; // tiny lift so the decal sits just in front of the wall
+const COUNT_CANVAS_WIDTH_PX = 512;
+const COUNT_CANVAS_HEIGHT_PX = 128;
+const COUNT_FONT_SIZE_PX = 96;
+const COUNT_LIGHT_SHADOW_OFFSET_PX = 2;
+const COUNT_DARK_SHADOW_OFFSET_PX = -2;
+const COUNT_FILL_COLOR = '#f4c45a';
+const COUNT_HIGHLIGHT_COLOR = 'rgba(255, 230, 170, 0.9)';
+const COUNT_SHADOW_COLOR = 'rgba(0, 0, 0, 0.95)';
+const COUNT_HALF_PX = 0.5;
+
 export class TrayMeshes {
   readonly group = new THREE.Group();
+  private readonly countCanvas: HTMLCanvasElement;
+  private readonly countCtx: CanvasRenderingContext2D;
+  private readonly countTexture: THREE.CanvasTexture;
+  private lastCount = -1;
 
   constructor(scene: THREE.Scene, tray: Tray) {
     const { width, depth, wallHeight } = gameBalance.tray;
@@ -144,6 +162,64 @@ export class TrayMeshes {
     binRight.position.set(width * HALF, binFloorY + binWallHeight * HALF, binCenterZ);
     this.group.add(binRight);
 
+    // Embossed coin-count label decal on the bin front face. Drawn via a
+    // CanvasTexture so the count can be updated cheaply at runtime; the
+    // dual light/dark text shadow fakes a chiseled / embossed look against
+    // the dark wood-colored wall.
+    this.countCanvas = document.createElement('canvas');
+    this.countCanvas.width = COUNT_CANVAS_WIDTH_PX;
+    this.countCanvas.height = COUNT_CANVAS_HEIGHT_PX;
+    const ctx = this.countCanvas.getContext('2d');
+    if (!ctx) throw new Error('TrayMeshes: 2D canvas context unavailable');
+    this.countCtx = ctx;
+    this.countTexture = new THREE.CanvasTexture(this.countCanvas);
+    this.countTexture.colorSpace = THREE.SRGBColorSpace;
+    this.countTexture.anisotropy = 4; // @no-magic-ok mipmap filtering quality
+
+    const labelWidth = width * COUNT_LABEL_WIDTH_RATIO;
+    const labelHeight = binWallHeight * COUNT_LABEL_HEIGHT_RATIO;
+    const labelMat = new THREE.MeshBasicMaterial({
+      map: this.countTexture,
+      transparent: true,
+      depthWrite: false,
+    });
+    const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(labelWidth, labelHeight), labelMat);
+    // Sit just in front of the bin front wall's outer face (camera is at +Z).
+    // PlaneGeometry's default normal points +Z, so no rotation is needed.
+    labelMesh.position.set(
+      0,
+      binFloorY + binWallHeight * HALF,
+      binFrontZ + COUNT_LABEL_Z_OFFSET,
+    );
+    this.group.add(labelMesh);
+    this.setCoinCount(0);
+
     scene.add(this.group);
+  }
+
+  /** Update the embossed coin count rendered on the front of the bin. */
+  setCoinCount(count: number): void {
+    if (count === this.lastCount) return;
+    this.lastCount = count;
+    const ctx = this.countCtx;
+    const w = this.countCanvas.width;
+    const h = this.countCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `700 ${COUNT_FONT_SIZE_PX}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const cx = w * COUNT_HALF_PX;
+    const cy = h * COUNT_HALF_PX;
+    const text = String(count);
+    // Dark inset shadow (top-left edge).
+    ctx.fillStyle = COUNT_SHADOW_COLOR;
+    ctx.fillText(text, cx + COUNT_DARK_SHADOW_OFFSET_PX, cy + COUNT_DARK_SHADOW_OFFSET_PX);
+    // Light highlight (bottom-right edge).
+    ctx.fillStyle = COUNT_HIGHLIGHT_COLOR;
+    ctx.fillText(text, cx + COUNT_LIGHT_SHADOW_OFFSET_PX, cy + COUNT_LIGHT_SHADOW_OFFSET_PX);
+    // Main fill on top.
+    ctx.fillStyle = COUNT_FILL_COLOR;
+    ctx.fillText(text, cx, cy);
+    this.countTexture.needsUpdate = true;
   }
 }

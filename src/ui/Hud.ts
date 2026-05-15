@@ -20,8 +20,8 @@ export class Hud {
     this.root.className = 'hud';
     this.root.innerHTML = `
       <div class="hud-left">
-        <div class="hud-row"><span class="hud-label">Coins</span><span class="hud-value" data-bank>0</span></div>
         <div class="hud-mute-slot" data-mute-slot></div>
+        <span class="hud-value" data-bank hidden>0</span>
       </div>
       <div class="hud-row"><span class="hud-label">Valuables</span><span class="hud-value" data-valuables>0</span></div>
     `;

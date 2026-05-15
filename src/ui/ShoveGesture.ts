@@ -18,12 +18,19 @@
 import type { AudioBus } from '../audio/AudioBus';
 import type { CoinPool } from '../game/CoinPool';
 import type { Renderer } from '../render/Renderer';
+import type { ShoveMeter } from './ShoveMeter';
 
 const MIN_DRAG_PX = 30; // pixel displacement below this is treated as a tap, not a shove
 const MAX_DRAG_DURATION_MS = 800; // slow drags (e.g. accidental moves) are ignored
 const PX_PER_VELOCITY = 200; // 200 px of drag \u2248 1.0 m/s coin velocity bump
-const MAX_VELOCITY = 0.8; // m/s cap so a wild swipe can't yeet every coin
-const COOLDOWN_MS = 200; // ignore retriggers within this window
+const MAX_VELOCITY = 0.8; // m/s cap so a wild swipe can't yeet every coin// Per-axis attenuation on the impulse delivered to coins. The raw shove
+// vector is way too strong — a single horizontal swipe could rearrange the
+// entire playfield. Damp horizontal (X, left/right) to 30% and vertical
+// (Z, forward/back, mapped from screen Y) to 10% of the gesture-derived
+// magnitude. Camera shake is unaffected so visual feedback still feels
+// crisp.
+const SHOVE_X_GAIN = 0.3;
+const SHOVE_Z_GAIN = 0.1;const COOLDOWN_MS = 200; // ignore retriggers within this window
 const SHAKE_AMPLITUDE_M = 0.015; // metres camera shifts at full-strength shove
 const SHAKE_DECAY_PER_SEC = 8; // exponential decay rate of the visual shake
 const SHAKE_REST_EPSILON_M = 0.0001; // metres below which the shake is snapped to zero
@@ -50,6 +57,7 @@ export class ShoveGesture {
     private readonly coinPool: CoinPool,
     private readonly audio: AudioBus,
     private readonly renderer: Renderer,
+    private readonly meter: ShoveMeter,
   ) {
     this.baseCamX = renderer.camera.position.x;
     this.baseCamZ = renderer.camera.position.z;
@@ -109,6 +117,8 @@ export class ShoveGesture {
     const now = performance.now();
     if (now - this.startTimeMs > MAX_DRAG_DURATION_MS) return;
     if (now - this.lastShoveAtMs < COOLDOWN_MS) return;
+    // Overheat gate — the meter rejects shoves during its 15s lockout.
+    if (!this.meter.tryConsume()) return;
     this.lastShoveAtMs = now;
     this.fire(dx, dy);
   };
@@ -125,8 +135,10 @@ export class ShoveGesture {
     const nx = dx / dist;
     const ny = dy / dist;
     // Pinball nudge: cabinet jerks in the drag direction; from the playfield's
-    // frame the loose coins inherit the OPPOSITE velocity.
-    this.coinPool.applyShove(-nx * mag, -ny * mag);
+    // frame the loose coins inherit the OPPOSITE velocity. Per-axis gain
+    // damps horizontal and (especially) forward/back impulses so a single
+    // swipe nudges the coins instead of rearranging the whole playfield.
+    this.coinPool.applyShove(-nx * mag * SHOVE_X_GAIN, -ny * mag * SHOVE_Z_GAIN);
     this.audio.playShove();
     // Visual feedback: camera shifts in the SHOVE (drag) direction, scaled by
     // the same magnitude, then decays back exponentially.

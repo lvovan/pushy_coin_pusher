@@ -69,6 +69,10 @@ export class CoinPool {
     slot.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     slot.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     slot.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    // Reset gravity scale to the default — tower coins set this to 0 and
+    // we don't want that to bleed into a slot reused later for a regular
+    // coin drop or scatter rain coin.
+    slot.body.setGravityScale(1, true);
     slot.body.wakeUp();
     return slot;
   }

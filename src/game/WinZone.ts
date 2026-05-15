@@ -91,6 +91,12 @@ export class WinZone {
       if (!this.creditedCoins.has(coin.index)) {
         this.creditedCoins.add(coin.index);
         this.binCoins.add(coin.index);
+        // Tower coins are spawned with gravityScale=0 so the lattice
+        // never collapses on its own. Once such a coin reaches the win
+        // zone (pushed forward by the pusher into the bin) we restore
+        // gravity so it falls into the collection pile like any other
+        // winnings. For regular coins this is a no-op.
+        coin.body.setGravityScale(1, true);
         this.state.awardCoinWin();
       }
       return true;
