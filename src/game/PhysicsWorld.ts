@@ -17,13 +17,13 @@ export type PhysicsPhase = 'idle' | 'stepping';
 // stacked contacts cleanly: the solver leaves residual velocity in the
 // pile every step, which the integrator then turns into visible
 // position jitter — even on bodies resting on a completely static
-// floor. Doubling the iteration count is the standard Rapier recipe for
-// "stuff jitters when stacked": it costs a small amount of CPU per
-// step but eliminates the jitter at the source. We do NOT change
-// `lengthUnit` — shrinking it scales contact stiffness up, which makes
-// stacks bouncier, not calmer.
-const SOLVER_ITERATIONS = 12;
-const FRICTION_ITERATIONS = 12;
+// floor. We bump iteration counts modestly above the default to remove
+// the worst of the jitter without paying the full 12/12 cost that was
+// in place when the body budget exploded past the 250-body target.
+// After capping the physical body count, 8/4 produces the same visual
+// stability for substantially less CPU per step on mobile.
+const SOLVER_ITERATIONS = 8;
+const FRICTION_ITERATIONS = 4;
 
 let rapierReady: Promise<void> | undefined;
 

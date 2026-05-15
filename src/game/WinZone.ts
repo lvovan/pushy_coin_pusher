@@ -10,11 +10,12 @@
  *   awarded by the win sensor credit the bank here; unmarked bodies are
  *   silently lost (side-loss).
  */
-import type { CoinPool } from './CoinPool';
+import type { CoinPool, CoinSlot } from './CoinPool';
 import type { GameState } from './GameState';
 import type { SensorEvent } from './PhysicsWorld';
 import type { Tray } from './Tray';
-import type { ValuablePool } from './ValuablePool';
+import type { ValuablePool, ValuableSlot } from './ValuablePool';
+import { gameBalance } from '../config/gameBalance';
 
 /**
  * WinZone — awards the bank/valuables counters the moment a coin or valuable
@@ -28,10 +29,21 @@ import type { ValuablePool } from './ValuablePool';
  * wall) are released to keep the pool from leaking active slots.
  */
 export class WinZone {
+  // Maximum number of physical coin bodies kept inside the collection bin
+  // at any time. Wins beyond this cap still credit the bank but their
+  // physical body is recycled instead of piling up. This bounds the
+  // active rigid-body count to a budget independent of the player's
+  // accumulated bank, which would otherwise grow without limit and pull
+  // the per-step Rapier cost off the 60 fps budget.
+  static readonly BIN_PHYSICAL_CAP = gameBalance.bin.physicalCap;
   // Slot indices that have already been credited at the sensor crossing; used
   // to prevent re-credit if a body bounces in and out of the sensor.
   private readonly creditedCoins = new Set<number>();
   private readonly creditedValuables = new Set<number>();
+  // Scratch buffers reused across `stepSideFallOff` calls so the per-frame
+  // pass doesn't allocate. Sized lazily by the iterator loops.
+  private readonly scratchCoins: CoinSlot[] = [];
+  private readonly scratchValuables: ValuableSlot[] = [];
   // Slot indices of coins that currently reside in the collection bin.
   // Invariant (maintained by main.ts): `binCoins.size === state.coinBank`.
   // - Increases by 1 when a coin is awarded at the win sensor (`handleSensor`).
@@ -90,8 +102,17 @@ export class WinZone {
     if (coin && coin.active) {
       if (!this.creditedCoins.has(coin.index)) {
         this.creditedCoins.add(coin.index);
-        this.binCoins.add(coin.index);
         this.state.awardCoinWin();
+        // Soft cap: keep the physical pile visible up to BIN_PHYSICAL_CAP,
+        // but recycle any further awarded bodies immediately. The bank
+        // counter is the source of truth; the physical pile is purely
+        // cosmetic feedback.
+        if (this.binCoins.size < WinZone.BIN_PHYSICAL_CAP) {
+          this.binCoins.add(coin.index);
+        } else {
+          this.creditedCoins.delete(coin.index);
+          this.coinPool.releaseByIndex(coin.index);
+        }
       }
       return true;
     }
@@ -120,17 +141,17 @@ export class WinZone {
    */
   stepSideFallOff(): number {
     let removed = 0;
-    // Snapshot the active set into a local array, then iterate backward so
-    // the pool's swap-pop release during iteration doesn't skip elements.
-    // (The original `for (const slot of pool.active())` form had a latent
-    // skip bug because releasing the current slot moves the last active
-    // element into the current position, which the forward iterator then
-    // walks past.) Allocating one array per frame is acceptable now that
-    // this pass runs once per rAF tick (in onAfterSteps) instead of once
-    // per physics substep.
-    const coinSlots = Array.from(this.coinPool.active());
-    for (let n = coinSlots.length - 1; n >= 0; n -= 1) {
-      const slot = coinSlots[n]!;
+    // Snapshot active slots into a reusable scratch array so we can iterate
+    // backward (releases use swap-pop, which would skip the forward iterator).
+    // Reusing `scratchCoins` per call avoids the per-frame `Array.from(...)`
+    // allocation that showed up in GC traces at high coin counts.
+    let n = 0;
+    for (const slot of this.coinPool.active()) {
+      this.scratchCoins[n++] = slot;
+    }
+    for (let i = n - 1; i >= 0; i -= 1) {
+      const slot = this.scratchCoins[i]!;
+      this.scratchCoins[i] = undefined as unknown as CoinSlot;
       if (!slot.active) continue;
       const t = slot.body.translation();
       if (this.tray.isOutOfPlay(t.x, t.y)) {
@@ -141,9 +162,13 @@ export class WinZone {
       }
     }
     if (this.valuablePool) {
-      const vSlots = Array.from(this.valuablePool.active());
-      for (let n = vSlots.length - 1; n >= 0; n -= 1) {
-        const slot = vSlots[n]!;
+      let m = 0;
+      for (const slot of this.valuablePool.active()) {
+        this.scratchValuables[m++] = slot;
+      }
+      for (let i = m - 1; i >= 0; i -= 1) {
+        const slot = this.scratchValuables[i]!;
+        this.scratchValuables[i] = undefined as unknown as ValuableSlot;
         if (!slot.active) continue;
         const t = slot.body.translation();
         if (this.tray.isOutOfPlay(t.x, t.y)) {

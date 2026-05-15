@@ -7,7 +7,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 
 import { gameBalance } from '../config/gameBalance';
 import { createRng, type Rng } from '../util/rng';
-import type { CoinPool } from './CoinPool';
+import type { CoinPool, CoinSlot } from './CoinPool';
 import type { PhysicsWorld } from './PhysicsWorld';
 import type { ValuablePool } from './ValuablePool';
 
@@ -263,16 +263,20 @@ export class Tray {
    * Deterministic per `placementSeed + 2`.
    */
   prefillCoins(coinPool: CoinPool): {
-    towersPlaced: number;
+    placedBeforeRain: number;
     rainDelayMs: number;
     startRain: () => number;
   } {
     // Coin-tower sizes — tall, narrow interleaved stacks (4 coins per
     // layer, every layer rotated 45° relative to the one below):
-    //   pusher : 20 layers (20 × 4 =  80 coins)
-    //   plate  : 40 layers (40 × 4 = 160 coins)
-    const PUSHER_TOWER_LAYERS = 20;
-    const PLATE_TOWER_LAYERS = 40;
+    //   pusher : 14 layers (14 × 4 =  56 coins)
+    //   plate  : 28 layers (28 × 4 = 112 coins)
+    // Both columns trimmed 30% from their original heights (20 / 40)
+    // to free budget for a loose surface scatter on the pusher and
+    // plate — coins the player can actually push around immediately
+    // instead of locking them inside a tall stack.
+    const PUSHER_TOWER_LAYERS = 14;
+    const PLATE_TOWER_LAYERS = 28;
     // Pusher top surface Y derived from Pusher.ts geometry
     // (PUSHER_HEIGHT - PUSHER_FLOOR_EMBED).
     const PUSHER_TOP_SURFACE_Y = 0.02875;
@@ -375,8 +379,8 @@ export class Tray {
     // (1) Phase 1 — Deterministic tower construction. Coins spawn
     //     directly at their final lattice positions on the supporting
     //     surface; no coin "rains down" in this phase.
-    let towersPlaced = 0;
-    towersPlaced += this.placeCoinTower(
+    let placedBeforeRain = 0;
+    placedBeforeRain += this.placeCoinTower(
       coinPool,
       pusherX,
       pusherZ,
@@ -384,9 +388,9 @@ export class Tray {
       ringRadius,
       ct,
       PUSHER_TOWER_LAYERS,
-      count - towersPlaced,
+      count - placedBeforeRain,
     );
-    towersPlaced += this.placeCoinTower(
+    placedBeforeRain += this.placeCoinTower(
       coinPool,
       plateX,
       plateZ,
@@ -394,7 +398,116 @@ export class Tray {
       ringRadius,
       ct,
       PLATE_TOWER_LAYERS,
-      count - towersPlaced,
+      count - placedBeforeRain,
+    );
+
+    // (1b) Phase 1b — Even surface scatter. The 30% trim on tower
+    //      height frees ~72 coins of budget; we spend them as a
+    //      lightly-piled spread across the pusher top and the plate
+    //      floor so the player starts with coins they can
+    //      immediately push, not just locked inside towers. Coins
+    //      are placed on a jittered grid (one coin per cell, ±40%
+    //      cell-size random offset) so the pile is visibly even
+    //      instead of clumping like a pure random scatter would.
+    //      Cells that overlap the respective tower footprint are
+    //      skipped. Coins spawn at small per-cell-staggered heights
+    //      above their supporting surface so the rare near-collision
+    //      between adjacent cells resolves as a tiny natural pile.
+    const PUSHER_SCATTER_COUNT = 36;
+    const PLATE_SCATTER_COUNT = 36;
+    // Z windows for each surface's scatter pile. The pusher window
+    // sits inside the always-on-pusher band (between back wall and
+    // the pusher's fully-retracted front face); the plate window
+    // sits forward of the pusher's fully-extended front edge plus
+    // lip, and behind the tray's slanted front lip — the same safe
+    // bands derived in the tower-placement geometry comments above.
+    const PUSHER_SCATTER_Z_MIN = -0.25;
+    const PUSHER_SCATTER_Z_MAX = -0.10;
+    const PLATE_SCATTER_Z_MIN = 0.06;
+    const PLATE_SCATTER_Z_MAX = 0.17;
+    // Vertical staggering: spawn each scatter coin at a slightly
+    // higher Y than the previous so that any two coins that happen to
+    // sample nearby XZ positions resolve their contact as a tiny
+    // gravity-driven pile rather than as an interpenetrating spawn.
+    const SCATTER_LIFT_BASE = 0.005;
+    const SCATTER_LIFT_STEP_MULT = 1.2;
+    const SCATTER_LIFT_STEP = ct * SCATTER_LIFT_STEP_MULT;
+    // Per-cell jitter as a fraction of cell size. 0.4 leaves a small
+    // guard band between adjacent cells so the placements never
+    // visibly collapse into a strict grid pattern, while preventing
+    // jittered points in two neighbouring cells from crossing into
+    // each other's territory.
+    const SCATTER_JITTER_FRAC = 0.4;
+    const scatterXMin = -this.halfWidth + SCATTER_MARGIN;
+    const scatterXMax = this.halfWidth - SCATTER_MARGIN;
+    const pusherKeepHalfForScatter = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
+    const plateKeepHalfForScatter = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
+
+    const scatterOnSurface = (
+      surfaceY: number,
+      zMin: number,
+      zMax: number,
+      keepX: number,
+      keepZ: number,
+      keepHalf: number,
+      requested: number,
+    ): number => {
+      // Build a grid whose cells are as close to square as the
+      // surface aspect ratio allows, sized so cell count >= requested.
+      // `cell ≈ √(area / requested)` is the canonical size that lays
+      // `requested` square cells onto the surface; we then round nx and
+      // nz independently and grow the smaller dimension if rounding
+      // landed us short of `requested` cells.
+      const width = scatterXMax - scatterXMin;
+      const depth = zMax - zMin;
+      const cellTarget = Math.sqrt((width * depth) / Math.max(1, requested));
+      let nx = Math.max(1, Math.round(width / cellTarget));
+      let nz = Math.max(1, Math.round(depth / cellTarget));
+      while (nx * nz < requested) {
+        if (width / (nx + 1) >= depth / (nz + 1)) nx += 1;
+        else nz += 1;
+      }
+      const cellW = width / nx;
+      const cellD = depth / nz;
+      const jitterX = cellW * SCATTER_JITTER_FRAC;
+      const jitterZ = cellD * SCATTER_JITTER_FRAC;
+      let placed = 0;
+      for (let row = 0; row < nz && placed < requested; row += 1) {
+        for (let col = 0; col < nx && placed < requested; col += 1) {
+          if (placedBeforeRain >= count) return placed;
+          const cx = scatterXMin + (col + HALF) * cellW + rng.range(-jitterX, jitterX);
+          const cz = zMin + (row + HALF) * cellD + rng.range(-jitterZ, jitterZ);
+          // Skip cells whose jittered point falls inside the tower
+          // keep-out box. We do NOT retry — accepting an even hole
+          // around the tower keeps the visual rhythm of the grid.
+          if (Math.abs(cx - keepX) < keepHalf && Math.abs(cz - keepZ) < keepHalf) continue;
+          const y = surfaceY + SCATTER_LIFT_BASE + placed * SCATTER_LIFT_STEP;
+          const coin = coinPool.spawn(cx, y, cz);
+          if (!coin) return placed;
+          placed += 1;
+          placedBeforeRain += 1;
+        }
+      }
+      return placed;
+    };
+
+    scatterOnSurface(
+      PUSHER_TOP_SURFACE_Y,
+      PUSHER_SCATTER_Z_MIN,
+      PUSHER_SCATTER_Z_MAX,
+      pusherX,
+      pusherZ,
+      pusherKeepHalfForScatter,
+      PUSHER_SCATTER_COUNT,
+    );
+    scatterOnSurface(
+      this.floorY,
+      PLATE_SCATTER_Z_MIN,
+      PLATE_SCATTER_Z_MAX,
+      plateX,
+      plateZ,
+      plateKeepHalfForScatter,
+      PLATE_SCATTER_COUNT,
     );
 
     // (2) Phase 2 — Controlled rain. Invoked by the caller after
@@ -408,7 +521,7 @@ export class Tray {
     const pusherKeepHalf = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
     const plateKeepHalf = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
     const startRain = (): number => {
-      let placed = towersPlaced;
+      let placed = placedBeforeRain;
       while (placed < count) {
         let sx = 0;
         let sz = 0;
@@ -431,10 +544,10 @@ export class Tray {
         if (!coin) break;
         placed += 1;
       }
-      return placed - towersPlaced;
+      return placed - placedBeforeRain;
     };
 
-    return { towersPlaced, rainDelayMs: RAIN_DELAY_MS, startRain };
+    return { placedBeforeRain, rainDelayMs: RAIN_DELAY_MS, startRain };
   }
 
   /**
@@ -501,7 +614,7 @@ export class Tray {
    * so callers (main.ts) can register them with WinZone.binCoins.
    * Deterministic per `placementSeed + 3`.
    */
-  prefillBin(coinPool: CoinPool, count: number): number[] {
+  prefillBin(coinPool: CoinPool, count: number): CoinSlot[] {
     const SEED_OFFSET = 3;
     const rng: Rng = createRng(gameBalance.valuables.placementSeed + SEED_OFFSET);
     const { bin } = gameBalance;
@@ -515,15 +628,15 @@ export class Tray {
     const zMin = this.halfDepth + MARGIN;
     const zMax = this.halfDepth + bin.depth - MARGIN;
     const yBase = bin.floorY + Y_LIFT;
-    const indices: number[] = [];
+    const slots: CoinSlot[] = [];
     for (let i = 0; i < count; i += 1) {
       const x = rng.range(xMin, xMax);
       const z = rng.range(zMin, zMax);
       const y = yBase + rng.next() * Y_STACK;
       const coin = coinPool.spawn(x, y, z);
       if (!coin) break;
-      indices.push(coin.index);
+      slots.push(coin);
     }
-    return indices;
+    return slots;
   }
 }

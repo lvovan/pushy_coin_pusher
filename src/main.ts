@@ -88,7 +88,14 @@ async function main(): Promise<void> {
   //   - winZone.handleSensor() — wins add a coin to the bin AND the bank
   //   - releaseOneBinCoinPerDrop() — every player drop releases one bin coin
   const prefillBinToBank = (count: number): void => {
-    const slots = tray.prefillBin(coinPool, count);
+    // The physical bin is capped; the bank counter is unbounded. Spawn only
+    // up to the remaining cap; the rest of the bank exists as the counter
+    // alone (and is visible via the bin's count label).
+    const remaining = WinZone.BIN_PHYSICAL_CAP - winZone.binCoinCount;
+    if (remaining <= 0) return;
+    const toSpawn = Math.min(count, remaining);
+    if (toSpawn <= 0) return;
+    const slots = tray.prefillBin(coinPool, toSpawn);
     for (const slot of slots) {
       winZone.addBinCoin(slot.index);
       // These coins are synthetic — they didn't cross the win sensor, so

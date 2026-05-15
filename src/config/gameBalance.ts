@@ -53,6 +53,7 @@ export interface GameBalance {
     readonly depth: number;
     readonly floorY: number;
     readonly wallHeight: number;
+    readonly physicalCap: number;
   };
   readonly valuables: {
     readonly initialCount: number;
@@ -109,7 +110,7 @@ export const gameBalance: GameBalance = Object.freeze({
     perSlotCooldownMs: 250,
     slotPositionsX: Object.freeze([-0.133, 0, 0.133]) as readonly [number, number, number],
     slotSpawnJitter: 0.01,
-    initialPileCount: 320,
+    initialPileCount: 300,
   }),
   pusher: Object.freeze({
     strokePeriodMs: 3429,
@@ -138,6 +139,11 @@ export const gameBalance: GameBalance = Object.freeze({
     depth: 0.25,
     floorY: -0.2,
     wallHeight: 0.08,
+    // Soft cap on physical coin bodies inside the collection bin. The
+    // bank counter is unbounded; bodies past this cap are recycled at the
+    // win sensor so the active-rigid-body count stays inside the
+    // performance budget regardless of accumulated bank.
+    physicalCap: 75,
   }),
   valuables: Object.freeze({
     initialCount: 6,
@@ -152,7 +158,11 @@ export const gameBalance: GameBalance = Object.freeze({
     coinDropVolume: 0.8,
   }),
   limits: Object.freeze({
-    maxActiveCoins: 750,
+    // 200 baseline tray pile + ~75 bin pile cap + headroom for in-flight
+    // drops/wins. Was 750 which preallocated three pools' worth of
+    // Rapier bodies, instance matrices, and broadphase entries unused
+    // in steady-state play.
+    maxActiveCoins: 350,
     maxActiveValuables: 16,
   }),
   render: Object.freeze({

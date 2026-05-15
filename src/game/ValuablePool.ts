@@ -54,9 +54,12 @@ export class ValuablePool {
       const massMult = gameBalance.physics.valuableMassMultipliers[variantId] ?? 1;
       const mass = gameBalance.physics.coinMass * massMult;
 
+      // CCD is off for valuables: they are larger than coins, never collide
+      // with high-velocity surfaces the way a freshly-dropped coin can, and
+      // are few in number — the tunneling risk that justifies CCD on coins
+      // does not apply here, so we skip the per-step swept-collision cost.
       const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, PARK_Y - index, 0)
-        .setCcdEnabled(true)
         .setLinearDamping(LINEAR_DAMPING)
         .setAngularDamping(ANGULAR_DAMPING);
       const body = world.world.createRigidBody(bodyDesc);

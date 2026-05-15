@@ -72,6 +72,11 @@ export class CoinInstances {
       roughness: COIN_BASE_SCALE - gameBalance.render.coinRoughness,
     });
     this.mesh = new THREE.InstancedMesh(geom, [sideMat, faceMat, faceMat], cap);
+    // We rewrite a subset of instance matrices every frame, so hint the
+    // driver that this buffer is dynamic. Without this hint Three.js
+    // defaults to STATIC_DRAW, which on some mobile GPU drivers triggers
+    // a slow path on every gl.bufferSubData.
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     // One-time zero-scale write for every slot. Re-released slots are
     // re-zeroed individually in `syncRender` so the buffer never holds a
