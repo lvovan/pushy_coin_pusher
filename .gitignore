@@ -1,0 +1,36 @@
+# Node / npm
+node_modules/
+npm-debug.log*
+yarn-error.log
+pnpm-debug.log*
+
+# Build & cache
+dist/
+build/
+.vite/
+.cache/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+# Test artifacts
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Env / local config
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

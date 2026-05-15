@@ -1,0 +1,37 @@
+{
+  "name": "pushy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pushy — browser-based 3D coin pusher game (Three.js + Rapier.js).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "check:no-magic": "node scripts/check-no-magic-numbers.mjs",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.mjs\"",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run check:no-magic && npm run test:unit && npm run test:integration && npm run test:e2e"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0",
+    "@types/node": "^20.19.41",
+    "@types/three": "^0.160.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^8.57.0",
+    "jsdom": "^24.1.3",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.3.0",
+    "vitest": "^1.6.0"
+  }
+}

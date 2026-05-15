@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pushy.local/contracts/game-balance.schema.json",
+  "title": "GameBalance",
+  "description": "Pushy MVP — single source of truth for all tunable values. Loaded from src/config/gameBalance.ts. Implements Constitution Principle V (Parameterization).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "economy",
+    "spawning",
+    "pusher",
+    "physics",
+    "tray",
+    "valuables",
+    "persistence",
+    "audio",
+    "limits",
+    "render"
+  ],
+  "properties": {
+    "economy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startingBank",
+        "dropCostPerCoin",
+        "winValuePerCoin",
+        "continueTopUpCoins"
+      ],
+      "properties": {
+        "startingBank": { "type": "integer", "minimum": 1, "default": 100, "description": "FR-011" },
+        "dropCostPerCoin": { "type": "integer", "minimum": 0, "default": 1, "description": "FR-012" },
+        "winValuePerCoin": { "type": "integer", "minimum": 0, "default": 1, "description": "FR-013" },
+        "continueTopUpCoins": { "type": "integer", "minimum": 1, "default": 50, "description": "Clarification Q2; consumed by FR-016a" }
+      }
+    },
+    "spawning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coinsPerTap", "perSlotCooldownMs", "slotPositionsX", "slotSpawnJitter", "initialPileCount"],
+      "properties": {
+        "coinsPerTap": { "type": "integer", "minimum": 1, "maximum": 10, "default": 1, "description": "FR-006: 1..N coins per tap" },
+        "perSlotCooldownMs": { "type": "integer", "minimum": 0, "default": 250, "description": "Clarification Q4: per-slot cooldown" },
+        "slotPositionsX": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [-0.2, 0, 0.2],
+          "description": "X coordinates of the three drop slots in tray-local meters"
+        },
+        "slotSpawnJitter": { "type": "number", "minimum": 0, "default": 0.01, "description": "Maximum random horizontal offset (m) applied at spawn to prevent perfect stacking" },
+        "initialPileCount": { "type": "integer", "minimum": 0, "default": 150, "description": "Number of coins to pre-populate the tray with at the start of a fresh session" }
+      }
+    },
+    "pusher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strokePeriodMs", "strokeAmplitude", "basePositionZ"],
+      "properties": {
+        "strokePeriodMs": { "type": "integer", "minimum": 500, "default": 2400, "description": "Full back-forth cycle duration" },
+        "strokeAmplitude": { "type": "number", "exclusiveMinimum": 0, "default": 0.18, "description": "Half-stroke distance in meters" },
+        "basePositionZ": { "type": "number", "default": -0.15, "description": "Pusher Z position at stroke phase 0" }
+      }
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gravity",
+        "fixedTimestepHz",
+        "coinMass",
+        "coinFriction",
+        "coinRestitution",
+        "coinRadius",
+        "coinThickness",
+        "valuableMassMultipliers",
+        "valuableFriction",
+        "valuableRestitution"
+      ],
+      "properties": {
+        "gravity": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, -9.81, 0]
+        },
+        "fixedTimestepHz": { "type": "integer", "minimum": 30, "maximum": 240, "default": 60, "description": "Physics simulation frequency (R2)" },
+        "coinMass": { "type": "number", "exclusiveMinimum": 0, "default": 0.008 },
+        "coinFriction": { "type": "number", "minimum": 0, "default": 0.5, "description": "Constitution II — metal-on-metal feel" },
+        "coinRestitution": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.05 },
+        "coinRadius": { "type": "number", "exclusiveMinimum": 0, "default": 0.012 },
+        "coinThickness": { "type": "number", "exclusiveMinimum": 0, "default": 0.002 },
+        "valuableMassMultipliers": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0.5, 1.0, 2.0],
+          "description": "Mass relative to coinMass for variant 0/1/2 (FR-008)"
+        },
+        "valuableFriction": { "type": "number", "minimum": 0, "default": 0.6 },
+        "valuableRestitution": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.15 }
+      }
+    },
+    "tray": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "depth", "wallHeight", "winZoneDepth"],
+      "properties": {
+        "width": { "type": "number", "exclusiveMinimum": 0, "default": 0.6 },
+        "depth": { "type": "number", "exclusiveMinimum": 0, "default": 0.5 },
+        "wallHeight": { "type": "number", "exclusiveMinimum": 0, "default": 0.05 },
+        "winZoneDepth": { "type": "number", "exclusiveMinimum": 0, "default": 0.05, "description": "Sensor depth extending past the front edge (FR-003)" }
+      }
+    },
+    "valuables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initialCount", "placementSeed"],
+      "properties": {
+        "initialCount": { "type": "integer", "minimum": 0, "maximum": 16, "default": 6, "description": "Clarification Q1 — seeded only at Start" },
+        "placementSeed": { "type": "integer", "minimum": 0, "default": 1, "description": "RNG seed for deterministic initial placement" }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["saveDebounceMs"],
+      "properties": {
+        "saveDebounceMs": { "type": "integer", "minimum": 100, "maximum": 5000, "default": 500, "description": "Constitution: ≥ 500 ms recommended; bounds SC-004 loss budget" }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clinkMaxPerSecond", "clinkBurst", "coinDropVolume"],
+      "properties": {
+        "clinkMaxPerSecond": { "type": "integer", "minimum": 0, "default": 12, "description": "FR-028 throttle ceiling (R8)" },
+        "clinkBurst": { "type": "integer", "minimum": 1, "default": 4 },
+        "coinDropVolume": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxActiveCoins", "maxActiveValuables"],
+      "properties": {
+        "maxActiveCoins": { "type": "integer", "minimum": 200, "maximum": 1000, "default": 250, "description": "Constitution: stable at ≥ 200 (SC-001); upper bound covers pre-fill heap" },
+        "maxActiveValuables": { "type": "integer", "minimum": 1, "maximum": 32, "default": 16 }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coinColor",
+        "coinMetalness",
+        "coinRoughness",
+        "valuableColors",
+        "pusherColor",
+        "trayColor",
+        "wallColor",
+        "backgroundColor",
+        "ambientIntensity",
+        "directionalIntensity"
+      ],
+      "properties": {
+        "coinColor": { "type": "integer", "minimum": 0, "description": "0xRRGGBB hex packed as integer" },
+        "coinMetalness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "coinRoughness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "valuableColors": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "pusherColor": { "type": "integer", "minimum": 0 },
+        "trayColor": { "type": "integer", "minimum": 0 },
+        "wallColor": { "type": "integer", "minimum": 0 },
+        "backgroundColor": { "type": "integer", "minimum": 0 },
+        "ambientIntensity": { "type": "number", "minimum": 0 },
+        "directionalIntensity": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

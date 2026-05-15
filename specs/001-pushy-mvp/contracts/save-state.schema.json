@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pushy.local/contracts/save-state.schema.json",
+  "title": "SaveStateV1",
+  "description": "Pushy MVP — LocalStorage payload format under key 'pushy.save.v1'. Implements Constitution Principle IV and spec FR-023..FR-026. Velocities intentionally excluded per Clarification Q3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "savedAt", "coinBank", "valuablesCollected", "coins", "valuables"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Version discriminator. Mismatch → discard save and start fresh (FR-026, Clarification Q5)."
+    },
+    "savedAt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "ms since epoch when the save was written; diagnostic only."
+    },
+    "coinBank": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Player's current spendable coin count (FR-011..FR-013)."
+    },
+    "valuablesCollected": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total valuables collected in this session (FR-014)."
+    },
+    "coins": {
+      "type": "array",
+      "maxItems": 500,
+      "description": "One entry per active coin. Order is not meaningful.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["px", "py", "pz", "qx", "qy", "qz", "qw"],
+        "properties": {
+          "px": { "type": "number" },
+          "py": { "type": "number" },
+          "pz": { "type": "number" },
+          "qx": { "type": "number" },
+          "qy": { "type": "number" },
+          "qz": { "type": "number" },
+          "qw": { "type": "number" }
+        }
+      }
+    },
+    "valuables": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "One entry per active valuable. Order is not meaningful.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["variantId", "px", "py", "pz", "qx", "qy", "qz", "qw"],
+        "properties": {
+          "variantId": { "type": "integer", "minimum": 0, "maximum": 2, "description": "Index into gameBalance.physics.valuableMassMultipliers" },
+          "px": { "type": "number" },
+          "py": { "type": "number" },
+          "pz": { "type": "number" },
+          "qx": { "type": "number" },
+          "qy": { "type": "number" },
+          "qz": { "type": "number" },
+          "qw": { "type": "number" }
+        }
+      }
+    }
+  }
+}
