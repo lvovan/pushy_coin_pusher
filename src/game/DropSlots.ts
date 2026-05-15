@@ -20,14 +20,21 @@ export class DropSlots {
   constructor(
     private readonly state: GameState,
     private readonly coinPool: CoinPool,
-    private readonly onSpawn?: (spawnedCount: number) => void,
+    private readonly onSpawn?: (spawnedCount: number, slotId: SlotId) => void,
+    private readonly onTapRejected?: (slotId: SlotId, reason: 'cooldown' | 'broke' | 'pool_empty') => void,
   ) {}
 
   tapSlot(id: SlotId, nowMs: number): boolean {
     const slot = this.state.slots[id];
     if (!slot) return false;
-    if (nowMs < slot.nextReadyAtMs) return false;
-    if (!this.state.canAffordDrop()) return false;
+    if (nowMs < slot.nextReadyAtMs) {
+      this.onTapRejected?.(id, 'cooldown');
+      return false;
+    }
+    if (!this.state.canAffordDrop()) {
+      this.onTapRejected?.(id, 'broke');
+      return false;
+    }
 
     const coinsPerTap = gameBalance.spawning.coinsPerTap;
     const jitter = gameBalance.spawning.slotSpawnJitter;
@@ -39,12 +46,15 @@ export class DropSlots {
       if (!coin) break;
       spawned += 1;
     }
-    if (spawned === 0) return false;
+    if (spawned === 0) {
+      this.onTapRejected?.(id, 'pool_empty');
+      return false;
+    }
     this.state.mutate((s) => {
       s.coinBank -= gameBalance.economy.dropCostPerCoin * spawned;
       s.slots[id]!.nextReadyAtMs = nowMs + gameBalance.spawning.perSlotCooldownMs;
     });
-    this.onSpawn?.(spawned);
+    this.onSpawn?.(spawned, id);
     return true;
   }
 }

@@ -12,8 +12,14 @@ const ICON_MUTED = '\u{1F507}'; // 🔇
 
 export class MuteButton {
   private readonly btn: HTMLButtonElement;
+  private readonly onToggle: ((muted: boolean) => void) | undefined;
 
-  constructor(parent: HTMLElement, private readonly audio: AudioBus) {
+  constructor(
+    parent: HTMLElement,
+    private readonly audio: AudioBus,
+    onToggle?: (muted: boolean) => void,
+  ) {
+    this.onToggle = onToggle;
     this.btn = document.createElement('button');
     this.btn.className = 'mute-btn';
     this.btn.type = 'button';
@@ -22,19 +28,20 @@ export class MuteButton {
       e.preventDefault();
       e.stopPropagation();
       audio.resume();
-      this.setMuted(!audio.isMuted);
+      this.setMuted(!audio.isMuted, true);
     });
     parent.appendChild(this.btn);
 
     const persisted = this.readPersisted();
-    this.setMuted(persisted);
+    this.setMuted(persisted, false);
   }
 
-  private setMuted(muted: boolean): void {
+  private setMuted(muted: boolean, userInitiated: boolean): void {
     this.audio.setMuted(muted);
     this.btn.textContent = muted ? ICON_MUTED : ICON_AUDIBLE;
     this.btn.classList.toggle('is-muted', muted);
     this.writePersisted(muted);
+    if (userInitiated) this.onToggle?.(muted);
   }
 
   private readPersisted(): boolean {

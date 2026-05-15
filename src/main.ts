@@ -1,6 +1,7 @@
 /**
  * Pushy — application bootstrap (Phase 4 wiring).
  */
+import { Clarity } from './analytics/Clarity';
 import { AudioBus } from './audio/AudioBus';
 import { CoinPool } from './game/CoinPool';
 import { DropSlots } from './game/DropSlots';
@@ -43,6 +44,30 @@ async function main(): Promise<void> {
   const resize = new ResizeManager(renderer);
   installLighting(renderer.scene, renderer.renderer);
 
+  // Microsoft Clarity — anonymous behavioural analytics. No-op locally when
+  // VITE_CLARITY_PROJECT_ID is not set. Cumulative counters (games_played,
+  // valuables_won_total) persist in localStorage and are mirrored as tags
+  // on every session so they show up as filterable dimensions in Clarity.
+  const clarity = new Clarity();
+  clarity.init();
+  clarity.syncCountersToTags([
+    'games_played',
+    'valuables_won_total',
+    'sessions_resumed',
+    'games_won_total',
+    'continues_used',
+    'shoves_used_total',
+    'rage_taps_total',
+    'slot_taps_0',
+    'slot_taps_1',
+    'slot_taps_2',
+  ]);
+  // Static device tags — useful for filtering by form factor.
+  clarity.set('device_pixel_ratio', window.devicePixelRatio.toFixed(2));
+  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  clarity.set('viewport_aspect', aspect.toFixed(2));
+  clarity.set('orientation', aspect < 1 ? 'portrait' : 'landscape');
+
   const audio = new AudioBus();
   void audio.init();
 
@@ -64,6 +89,74 @@ async function main(): Promise<void> {
     clinkedCoinHandles.clear();
   };
 
+  // Per-session analytics counters (reset on every fresh / resumed session).
+  let sessionDropCount = 0;
+  let sessionStartMs = 0;
+  let sessionStartingBank = 0;
+  let sessionPeakBank = 0;
+  let sessionFirstDropMs = -1; // -1 = no drop yet this session
+  const sessionSlotTaps: [number, number, number] = [0, 0, 0];
+  // Rage-tap detection: rolling buffer of failed-while-broke tap timestamps.
+  // 5+ failed taps within 1s while bank=0 emits a single `rage_tap` event
+  // (with a 3s cooldown so a sustained mash doesn't spam Clarity).
+  const RAGE_WINDOW_MS = 1000;
+  const RAGE_THRESHOLD = 5;
+  const RAGE_COOLDOWN_MS = 3000;
+  const rageTapTimes: number[] = [];
+  let lastRageTapAtMs = -RAGE_COOLDOWN_MS;
+  // FPS sampling: keep last N frame intervals, compute p50/p05 at session end.
+  const FPS_SAMPLE_CAP = 600; // ~10s at 60fps; ring-buffered
+  const frameMsSamples: number[] = [];
+  let frameSampleHead = 0;
+  const recordFrameMs = (dtMs: number): void => {
+    if (dtMs <= 0 || dtMs > 1000) return; // ignore tab-switch / debugger pauses
+    if (frameMsSamples.length < FPS_SAMPLE_CAP) {
+      frameMsSamples.push(dtMs);
+    } else {
+      frameMsSamples[frameSampleHead] = dtMs;
+      frameSampleHead = (frameSampleHead + 1) % FPS_SAMPLE_CAP;
+    }
+  };
+  const computeFpsPercentile = (pct: number): number => {
+    if (frameMsSamples.length === 0) return 0;
+    const sorted = [...frameMsSamples].sort((a, b) => a - b);
+    // pct here is for FPS (higher = better). To get the low-end (p05) FPS we
+    // want the high-end (p95) of frame time. Convert: frameMs percentile is
+    // (1 - pct/100). For p50 FPS use frameMs p50.
+    const idx = Math.min(sorted.length - 1, Math.floor((1 - pct / 100) * sorted.length));
+    const ms = sorted[idx] ?? 0;
+    return ms > 0 ? Math.round(1000 / ms) : 0;
+  };
+  const resetSessionMetrics = (startingBank: number): void => {
+    sessionDropCount = 0;
+    sessionStartMs = performance.now();
+    sessionStartingBank = startingBank;
+    sessionPeakBank = startingBank;
+    sessionFirstDropMs = -1;
+    sessionSlotTaps[0] = sessionSlotTaps[1] = sessionSlotTaps[2] = 0;
+    rageTapTimes.length = 0;
+    frameMsSamples.length = 0;
+    frameSampleHead = 0;
+  };
+  const flushSessionMetrics = (outcome: 'game_over' | 'won' | 'abandoned'): void => {
+    const durationMs = Math.round(performance.now() - sessionStartMs);
+    clarity.set('last_session_outcome', outcome);
+    clarity.set('last_session_drops', sessionDropCount);
+    clarity.set('last_session_duration_s', Math.round(durationMs / 1000));
+    clarity.set('last_session_starting_bank', sessionStartingBank);
+    clarity.set('last_session_peak_bank', sessionPeakBank);
+    clarity.set('last_session_valuables', state.valuablesCollected);
+    if (sessionFirstDropMs >= 0) {
+      clarity.set('last_session_time_to_first_drop_ms', sessionFirstDropMs);
+    }
+    clarity.set('last_session_slot_taps_0', sessionSlotTaps[0]);
+    clarity.set('last_session_slot_taps_1', sessionSlotTaps[1]);
+    clarity.set('last_session_slot_taps_2', sessionSlotTaps[2]);
+    clarity.set('last_session_fps_p50', computeFpsPercentile(50));
+    clarity.set('last_session_fps_p05', computeFpsPercentile(5));
+    clarity.event(`session_end_${outcome}`);
+  };
+
   const physics = await PhysicsWorld.create();
   const tray = new Tray(physics);
   const pusher = new Pusher(physics);
@@ -80,6 +173,8 @@ async function main(): Promise<void> {
   const winZone = new WinZone(tray, coinPool, state, valuablePool, (x, y, z) => {
     confetti.burst(x, y, z);
     if (audioArmed) audio.playValuable();
+    clarity.event('valuable_win');
+    clarity.incrementTag('valuables_won_total');
   });
 
   // Invariant: the number of physical coins inside the collection bin equals
@@ -108,11 +203,41 @@ async function main(): Promise<void> {
   const releaseOneBinCoinPerDrop = (spawnedCount: number): void => {
     for (let i = 0; i < spawnedCount; i += 1) winZone.releaseOneBinCoin();
   };
-  const drops = new DropSlots(state, coinPool, (spawnedCount) => {
-    armAudio();
-    audio.playCoinDrop();
-    releaseOneBinCoinPerDrop(spawnedCount);
-  });
+  const drops = new DropSlots(
+    state,
+    coinPool,
+    (spawnedCount, slotId) => {
+      armAudio();
+      audio.playCoinDrop();
+      releaseOneBinCoinPerDrop(spawnedCount);
+      sessionDropCount += spawnedCount;
+      sessionSlotTaps[slotId] += 1;
+      clarity.incrementTag(`slot_taps_${slotId}`);
+      if (sessionFirstDropMs < 0 && sessionStartMs > 0) {
+        sessionFirstDropMs = Math.round(performance.now() - sessionStartMs);
+        clarity.set('time_to_first_drop_ms', sessionFirstDropMs);
+      }
+    },
+    (slotId, reason) => {
+      // Rage-tap signal: rapid failed taps while broke. Cooldown-rejections
+      // are normal (the player is mashing on purpose) so we ignore them.
+      void slotId;
+      if (reason !== 'broke') return;
+      const now = performance.now();
+      rageTapTimes.push(now);
+      while (rageTapTimes.length > 0 && now - (rageTapTimes[0] as number) > RAGE_WINDOW_MS) {
+        rageTapTimes.shift();
+      }
+      if (
+        rageTapTimes.length >= RAGE_THRESHOLD &&
+        now - lastRageTapAtMs >= RAGE_COOLDOWN_MS
+      ) {
+        lastRageTapAtMs = now;
+        clarity.event('rage_tap');
+        clarity.incrementTag('rage_taps_total');
+      }
+    },
+  );
   const loop = new GameLoop(physics, renderer);
 
   const saveStore = new SaveStore();
@@ -131,7 +256,10 @@ async function main(): Promise<void> {
   // Coins counter; the HUD root stays present even when its data rows are
   // hidden so the mute toggle remains accessible. State is persisted to
   // localStorage.
-  const muteButton = new MuteButton(hud.getMuteSlot(), audio);
+  const muteButton = new MuteButton(hud.getMuteSlot(), audio, (muted) => {
+    clarity.event(muted ? 'mute_on' : 'mute_off');
+    clarity.incrementTag('mute_toggles_total');
+  });
   void muteButton;
 
   const slotButtons = new DropSlotButtons(overlay, drops, renderer);
@@ -144,7 +272,10 @@ async function main(): Promise<void> {
   // the drop-slot tap zones (tap = drop, press-and-drag = shove).
   const shoveMeter = new ShoveMeter(overlay);
   shoveMeter.hide();
-  const shoveGesture = new ShoveGesture(coinPool, audio, renderer, shoveMeter);
+  const shoveGesture = new ShoveGesture(coinPool, audio, renderer, shoveMeter, () => {
+    clarity.event('shove');
+    clarity.incrementTag('shoves_used_total');
+  });
 
   const startFreshSession = (): void => {
     for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
@@ -158,6 +289,9 @@ async function main(): Promise<void> {
     const prefill = tray.prefillCoins(coinPool);
     window.setTimeout(prefill.startRain, prefill.rainDelayMs);
     prefillBinToBank(state.coinBank);
+    clarity.incrementTag('games_played');
+    clarity.event('session_start');
+    resetSessionMetrics(state.coinBank);
   };
 
   const gameOver = new GameOverOverlay(overlay, {
@@ -167,6 +301,8 @@ async function main(): Promise<void> {
       state.applyContinueTopUp();
       const delta = state.coinBank - previousBank;
       if (delta > 0) prefillBinToBank(delta);
+      clarity.incrementTag('continues_used');
+      clarity.event('continue');
     },
   });
   gameOver.attach(state);
@@ -214,6 +350,7 @@ async function main(): Promise<void> {
     confetti.update(dtMs);
     shoveGesture.update(dtMs);
     shoveMeter.update(dtMs);
+    if (state.mode === 'playing') recordFrameMs(dtMs);
   });
 
   // Coins that win at the front sensor stay as physics bodies and pile up
@@ -226,6 +363,25 @@ async function main(): Promise<void> {
   });
   state.subscribe((s) => {
     trayMeshes.setCoinCount(s.coinBank);
+  });
+  state.subscribe((s) => {
+    if (s.mode === 'playing' && s.coinBank > sessionPeakBank) sessionPeakBank = s.coinBank;
+  });
+
+  // Session-end analytics: fire once per transition into a terminal state.
+  // `upgrade()` flags wins as priority recordings (Clarity caps these per day,
+  // so we reserve it for the most informative sessions).
+  let lastReportedMode: typeof state.mode = state.mode;
+  state.subscribe((s) => {
+    if (s.mode === lastReportedMode) return;
+    if (s.mode === 'gameOver') {
+      flushSessionMetrics('game_over');
+    } else if (s.mode === 'won') {
+      flushSessionMetrics('won');
+      clarity.incrementTag('games_won_total');
+      clarity.upgrade('game_won');
+    }
+    lastReportedMode = s.mode;
   });
 
   const existingSave = saveStore.load();
@@ -248,6 +404,9 @@ async function main(): Promise<void> {
       hud.show();
       shoveMeter.show();
       loop.start();
+      clarity.incrementTag('games_played');
+      clarity.event('session_start');
+      resetSessionMetrics(state.coinBank);
     },
     onResume() {
       audio.resume();
@@ -256,7 +415,23 @@ async function main(): Promise<void> {
       winZone.reset();
       confetti.reset();
       resetAudioArming();
-      restoreFromSave(save, coinPool, pusher, state, valuablePool);
+      try {
+        restoreFromSave(save, coinPool, pusher, state, valuablePool);
+      } catch (err) {
+        // Save schema drifted or a body refused to spawn — surface via
+        // Clarity, wipe the bad save, and fall back to a fresh session so
+        // the player is never stuck on a broken resume.
+        console.error('[pushy] restore failed', err);
+        clarity.event('save_restore_failed');
+        clarity.incrementTag('save_restore_failed_total');
+        saveStore.clear();
+        startFreshSession();
+        home.hide();
+        hud.show();
+        shoveMeter.show();
+        loop.start();
+        return;
+      }
       // The save only persists bank + valuables counters and free body poses,
       // not bin-membership. Re-establish the invariant by spawning a bin pile
       // sized to the restored bank counter.
@@ -265,6 +440,9 @@ async function main(): Promise<void> {
       hud.show();
       shoveMeter.show();
       loop.start();
+      clarity.incrementTag('sessions_resumed');
+      clarity.event('session_resume');
+      resetSessionMetrics(state.coinBank);
     },
   });
   home.setResumeEnabled(existingSave !== null);

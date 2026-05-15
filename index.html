@@ -190,13 +190,14 @@
         top: 0;
         left: 0;
         right: 0;
-        /* Confine the flash to the upper region of the screen; fades to
-           transparent at the projected screen-height of the play-tray's
-           back wall (set by DropSlotButtons as `--flash-height`). */
-        height: var(--flash-height, 40%);
+        /* Confine the flash to the top region of the screen — it must
+           never overlay the playfield. Extend at most 10px below the
+           bottom edge of the SHOVE meter (meter top = safe-area-inset-top
+           + 52px, meter height = 30px, plus 10px buffer = 92px total). */
+        height: calc(env(safe-area-inset-top, 0px) + 92px);
         background: linear-gradient(
           to bottom,
-          rgba(255, 255, 255, 0.11) 0%,
+          rgba(255, 255, 255, 0.825) 0%,
           rgba(255, 255, 255, 0) 100%
         );
         opacity: 0;

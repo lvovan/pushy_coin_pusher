@@ -58,6 +58,7 @@ export class ShoveGesture {
     private readonly audio: AudioBus,
     private readonly renderer: Renderer,
     private readonly meter: ShoveMeter,
+    private readonly onShove?: () => void,
   ) {
     this.baseCamX = renderer.camera.position.x;
     this.baseCamZ = renderer.camera.position.z;
@@ -140,6 +141,7 @@ export class ShoveGesture {
     // swipe nudges the coins instead of rearranging the whole playfield.
     this.coinPool.applyShove(-nx * mag * SHOVE_X_GAIN, -ny * mag * SHOVE_Z_GAIN);
     this.audio.playShove();
+    this.onShove?.();
     // Visual feedback: camera shifts in the SHOVE (drag) direction, scaled by
     // the same magnitude, then decays back exponentially.
     const scale = (mag / MAX_VELOCITY) * SHAKE_AMPLITUDE_M;

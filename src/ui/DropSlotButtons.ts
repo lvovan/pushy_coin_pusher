@@ -4,10 +4,16 @@
  * so a press anywhere in a column triggers its slot. On press, a subtle white
  * flash fades in/out over the touched column as a tactile hint.
  *
- * Press-and-hold (mouse or touch) produces a continuous flow of drops: while
- * pressed, `DropSlots.tapSlot()` is invoked every animation frame.
- * `tapSlot` itself enforces `perSlotCooldownMs`, so the rate is implicitly
- * capped and the bank depletes naturally.
+ * Drops fire on pointer-up, not pointer-down, so a shove gesture (press-and-
+ * drag) does not accidentally drop a coin in the column where the gesture
+ * began. If the pointer moves more than `DRAG_THRESHOLD_PX` while pressed,
+ * the press is classified as a shove and no drop occurs on release.
+ *
+ * Press-and-hold (mouse or touch) still produces a continuous flow of drops:
+ * after `HOLD_DELAY_MS` of being pressed without significant movement, the
+ * column enters "hold mode" and `DropSlots.tapSlot()` is invoked every
+ * animation frame. `tapSlot` itself enforces `perSlotCooldownMs`, so the
+ * rate is implicitly capped and the bank depletes naturally.
  */
 import * as THREE from 'three';
 
@@ -24,12 +30,26 @@ const FLASH_HEIGHT_FALLBACK_FRAC = 0.4;
 // (degenerate camera state on first frame, orientation change mid-render)
 // never collapses the overlay to invisibility.
 const FLASH_HEIGHT_MIN_PX = 80;
+// Pointer movement (in CSS pixels) above which a press is reclassified from
+// a tap into a shove gesture. Mirrors `MIN_DRAG_PX` in `ShoveGesture` so the
+// two systems agree on the tap/shove boundary.
+const DRAG_THRESHOLD_PX = 30;
+// Delay before a stationary press enters continuous "hold to drop" mode.
+// Short enough that intentional holds feel responsive, long enough that a
+// brief tap-release cycle never accidentally engages hold mode.
+const HOLD_DELAY_MS = 180;
 
 interface SlotEntry {
   readonly id: SlotId;
   readonly zone: HTMLButtonElement;
   readonly flash: HTMLDivElement;
   pressed: boolean;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  isShove: boolean;
+  holdActive: boolean;
+  holdTimerId: number;
   rafId: number;
 }
 
@@ -71,6 +91,12 @@ export class DropSlotButtons {
         zone,
         flash,
         pressed: false,
+        pointerId: -1,
+        startX: 0,
+        startY: 0,
+        isShove: false,
+        holdActive: false,
+        holdTimerId: 0,
         rafId: 0,
       };
       this.slots.push(entry);
@@ -86,15 +112,6 @@ export class DropSlotButtons {
   }
 
   private attachPressHandlers(entry: SlotEntry, drops: DropSlots): void {
-    const stop = (): void => {
-      if (!entry.pressed) return;
-      entry.pressed = false;
-      if (entry.rafId !== 0) {
-        cancelAnimationFrame(entry.rafId);
-        entry.rafId = 0;
-      }
-    };
-
     // Restart the column's flash animation. Called only after a tap
     // actually spawned a coin so the visual cue is never out-of-sync
     // with reality (e.g. when the bank is empty or the pool is full).
@@ -105,26 +122,99 @@ export class DropSlotButtons {
       entry.flash.classList.add('is-flashing');
     };
 
+    const cancelHoldTimer = (): void => {
+      if (entry.holdTimerId !== 0) {
+        clearTimeout(entry.holdTimerId);
+        entry.holdTimerId = 0;
+      }
+    };
+
+    const cancelRaf = (): void => {
+      if (entry.rafId !== 0) {
+        cancelAnimationFrame(entry.rafId);
+        entry.rafId = 0;
+      }
+    };
+
+    // Continuous-drop loop engaged after HOLD_DELAY_MS of stationary press.
     const tick = (): void => {
-      if (!entry.pressed) return;
+      if (!entry.pressed || !entry.holdActive) return;
       if (drops.tapSlot(entry.id, performance.now())) playFlash();
       entry.rafId = requestAnimationFrame(tick);
+    };
+
+    const beginHold = (): void => {
+      entry.holdTimerId = 0;
+      if (!entry.pressed || entry.isShove) return;
+      entry.holdActive = true;
+      // First drop fires the moment hold mode engages.
+      if (drops.tapSlot(entry.id, performance.now())) playFlash();
+      entry.rafId = requestAnimationFrame(tick);
+    };
+
+    const reset = (): void => {
+      entry.pressed = false;
+      entry.pointerId = -1;
+      entry.isShove = false;
+      entry.holdActive = false;
+      cancelHoldTimer();
+      cancelRaf();
     };
 
     const start = (e: PointerEvent): void => {
       e.preventDefault();
       if (entry.pressed) return;
       entry.pressed = true;
+      entry.pointerId = e.pointerId;
+      entry.startX = e.clientX;
+      entry.startY = e.clientY;
+      entry.isShove = false;
+      entry.holdActive = false;
       entry.zone.setPointerCapture?.(e.pointerId);
-      if (drops.tapSlot(entry.id, performance.now())) playFlash();
-      entry.rafId = requestAnimationFrame(tick);
+      entry.holdTimerId = window.setTimeout(beginHold, HOLD_DELAY_MS);
+      // No drop fires here — drops are deferred to pointer-up (single tap)
+      // or to the moment hold mode engages, after the press has been
+      // disambiguated from a shove gesture.
+    };
+
+    const move = (e: PointerEvent): void => {
+      if (!entry.pressed || e.pointerId !== entry.pointerId) return;
+      if (entry.isShove) return;
+      const dx = e.clientX - entry.startX;
+      const dy = e.clientY - entry.startY;
+      if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        // Press has become a shove — abort any pending hold timer or active
+        // continuous drops and remember the press is no longer a tap.
+        entry.isShove = true;
+        cancelHoldTimer();
+        cancelRaf();
+        entry.holdActive = false;
+      }
+    };
+
+    const end = (e: PointerEvent): void => {
+      if (!entry.pressed || e.pointerId !== entry.pointerId) return;
+      const wasShove = entry.isShove;
+      const wasHold = entry.holdActive;
+      reset();
+      // Single-tap drop: short press with no significant movement and no
+      // hold-mode engagement. A shove gesture or a hold session never
+      // produces an additional drop on release.
+      if (!wasShove && !wasHold) {
+        if (drops.tapSlot(entry.id, performance.now())) playFlash();
+      }
+    };
+
+    const cancel = (e: PointerEvent): void => {
+      if (e.pointerId !== entry.pointerId) return;
+      reset();
     };
 
     entry.zone.addEventListener('pointerdown', start);
-    entry.zone.addEventListener('pointerup', stop);
-    entry.zone.addEventListener('pointercancel', stop);
-    entry.zone.addEventListener('pointerleave', stop);
-    entry.zone.addEventListener('lostpointercapture', stop);
+    entry.zone.addEventListener('pointermove', move);
+    entry.zone.addEventListener('pointerup', end);
+    entry.zone.addEventListener('pointercancel', cancel);
+    entry.zone.addEventListener('lostpointercapture', cancel);
     entry.zone.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -175,6 +265,7 @@ export class DropSlotButtons {
     window.removeEventListener('orientationchange', this.onResize);
     for (const entry of this.slots) {
       if (entry.rafId !== 0) cancelAnimationFrame(entry.rafId);
+      if (entry.holdTimerId !== 0) clearTimeout(entry.holdTimerId);
     }
     this.root.remove();
   }
