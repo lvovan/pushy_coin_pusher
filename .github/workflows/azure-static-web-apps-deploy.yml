@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Create frontend .env file
-        run: echo "VITE_CLARITY_PROJECT_ID=${{ secrets.VITE_CLARITY_PROJECT_ID }}" > ./frontend/.env
+        run: echo "VITE_CLARITY_PROJECT_ID=${{ secrets.VITE_CLARITY_PROJECT_ID }}" > ./.env
       - name: Build And Deploy
         uses: Azure/static-web-apps-deploy@v1
         with:
