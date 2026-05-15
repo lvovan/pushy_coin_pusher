@@ -46,6 +46,7 @@ export class WinZone {
     private readonly coinPool: CoinPool,
     private readonly state: GameState,
     private readonly valuablePool: ValuablePool | undefined = undefined,
+    private readonly onValuableWin: ((x: number, y: number, z: number) => void) | undefined = undefined,
   ) {}
 
   /** Clears the credited-slot bookkeeping. Call when the pools are mass-released
@@ -100,6 +101,10 @@ export class WinZone {
         if (!this.creditedValuables.has(v.index)) {
           this.creditedValuables.add(v.index);
           this.state.awardValuableWin();
+          if (this.onValuableWin) {
+            const t = v.body.translation();
+            this.onValuableWin(t.x, t.y, t.z);
+          }
         }
         return true;
       }

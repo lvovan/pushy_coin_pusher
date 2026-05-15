@@ -143,9 +143,9 @@ export class Tray {
       true,
     );
     const binFloorCol = world.world.createCollider(
-      RAPIER.ColliderDesc.cuboid(this.halfWidth, WALL_THICKNESS * HALF, binFullDepth * HALF).setFriction(
-        gameBalance.physics.coinFriction,
-      ),
+      RAPIER.ColliderDesc.cuboid(this.halfWidth, WALL_THICKNESS * HALF, binFullDepth * HALF)
+        .setFriction(gameBalance.physics.coinFriction)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       binFloorBody,
     );
 
@@ -233,28 +233,165 @@ export class Tray {
   }
 
   /**
-   * Pre-populate the tray with a random pile of coins at the start of a fresh
-   * session. Coins are spawned at varied heights so they settle naturally onto
-   * the floor and into a heap. Deterministic per `placementSeed + 2`.
+   * Pre-populate the playfield at the start of a fresh session. Mimics a
+   * real arcade coin pusher's initial setup:
+   *   (1) compute how many coins each pyramid construction needs;
+   *   (2) build the two pyramids first (a small square step-pyramid on the
+   *       pusher, a slightly larger one on the plate, each placed at a
+   *       random position within its surface);
+   *   (3) spawn the remaining coins high above the playfield so the player
+   *       sees them rain down — positions are rejection-sampled to avoid
+   *       dropping directly onto a pyramid footprint.
+   * Pyramid construction follows the classic arcade pattern observed in
+   * coin-pusher cabinets: a square footprint where each successive layer
+   * shrinks by one position on every side, coins lying flat with layer
+   * height equal to one coin thickness. Deterministic per `placementSeed + 2`.
    */
   prefillCoins(coinPool: CoinPool): number {
-    const rng: Rng = createRng(gameBalance.valuables.placementSeed + 2);
+    const PUSHER_PYRAMID_LAYERS = 3;
+    const PLATE_PYRAMID_LAYERS = 4;
+    // Pusher top surface Y derived from Pusher.ts geometry
+    // (PUSHER_HEIGHT - PUSHER_FLOOR_EMBED).
+    const PUSHER_TOP_SURFACE_Y = 0.02875;
+    // Random-placement Z ranges per surface. Pusher pyramid stays inside
+    // the visible portion of the moving plate (between the back wall and
+    // the pusher's front edge at phase 0). Plate pyramid is biased toward
+    // the front half so it's clearly visible in front of the pusher.
+    const PUSHER_PYRAMID_Z_MIN = -0.2;
+    const PUSHER_PYRAMID_Z_MAX = -0.14;
+    const PLATE_PYRAMID_Z_MIN = -0.05;
+    const PLATE_PYRAMID_Z_MAX = 0.13;
+    const PYRAMID_EDGE_MARGIN = 0.02;
+    const PYRAMID_SPACING_MULT = 2.05;
+    // Lift each pyramid base slightly above its surface so the bottom layer
+    // settles cleanly under gravity once the loop starts.
+    const PUSHER_PYRAMID_LIFT = 0.002;
+    const PLATE_PYRAMID_LIFT = 0.002;
+    // Scatter coins spawn high above the playfield so the falling animation
+    // is clearly visible after the loop starts.
+    const SCATTER_MARGIN = 0.03;
+    const SCATTER_MIN_Y = 0.3;
+    const SCATTER_Y_RANGE = 0.6;
+    // Extra clearance around each pyramid footprint when sampling scatter
+    // positions, so dropped coins miss the pyramids rather than knocking
+    // them over.
+    const PYRAMID_KEEP_OUT_MARGIN = 0.02;
+    const SCATTER_MAX_RETRIES = 16;
+    const SEED_OFFSET = 2;
+
+    const rng: Rng = createRng(gameBalance.valuables.placementSeed + SEED_OFFSET);
     const count = gameBalance.spawning.initialPileCount;
-    const MARGIN = 0.03;
-    const MIN_Y = 0.04;
-    const Y_RANGE = 0.5;
-    const xMin = -this.halfWidth + MARGIN;
-    const xMax = this.halfWidth - MARGIN;
-    const zMin = -this.halfDepth + MARGIN;
-    const zMax = this.halfDepth - MARGIN;
+    const cr = gameBalance.physics.coinRadius;
+    const ct = gameBalance.physics.coinThickness;
+
+    // (1) Pyramid sizing — half-extent of the base layer footprint in XZ.
+    const spacing = cr * PYRAMID_SPACING_MULT;
+    const pusherBaseHalf = (PUSHER_PYRAMID_LAYERS - 1) * spacing * HALF + cr;
+    const plateBaseHalf = (PLATE_PYRAMID_LAYERS - 1) * spacing * HALF + cr;
+
+    // Pick a random centre for each pyramid such that the entire footprint
+    // remains inside its surface plus a small edge margin.
+    const pusherX = rng.range(
+      -this.halfWidth + pusherBaseHalf + PYRAMID_EDGE_MARGIN,
+      this.halfWidth - pusherBaseHalf - PYRAMID_EDGE_MARGIN,
+    );
+    const pusherZ = rng.range(PUSHER_PYRAMID_Z_MIN, PUSHER_PYRAMID_Z_MAX);
+    const plateX = rng.range(
+      -this.halfWidth + plateBaseHalf + PYRAMID_EDGE_MARGIN,
+      this.halfWidth - plateBaseHalf - PYRAMID_EDGE_MARGIN,
+    );
+    const plateZ = rng.range(PLATE_PYRAMID_Z_MIN, PLATE_PYRAMID_Z_MAX);
+
+    // (2) Build both pyramids first.
     let placed = 0;
-    for (let i = 0; i < count; i += 1) {
-      const x = rng.range(xMin, xMax);
-      const z = rng.range(zMin, zMax);
-      const y = MIN_Y + rng.next() * Y_RANGE;
-      const coin = coinPool.spawn(x, y, z);
+    placed += this.placePyramid(
+      coinPool,
+      pusherX,
+      pusherZ,
+      PUSHER_TOP_SURFACE_Y + PUSHER_PYRAMID_LIFT,
+      cr,
+      ct,
+      PUSHER_PYRAMID_LAYERS,
+      count - placed,
+    );
+    placed += this.placePyramid(
+      coinPool,
+      plateX,
+      plateZ,
+      this.floorY + PLATE_PYRAMID_LIFT,
+      cr,
+      ct,
+      PLATE_PYRAMID_LAYERS,
+      count - placed,
+    );
+
+    // (3) Spawn the remaining coins high above the playfield. Reject
+    // positions that fall inside either pyramid's footprint (plus a small
+    // keep-out margin) so the rain misses the constructions.
+    const xMin = -this.halfWidth + SCATTER_MARGIN;
+    const xMax = this.halfWidth - SCATTER_MARGIN;
+    const zMin = -this.halfDepth + SCATTER_MARGIN;
+    const zMax = this.halfDepth - SCATTER_MARGIN;
+    const pusherKeepHalf = pusherBaseHalf + PYRAMID_KEEP_OUT_MARGIN;
+    const plateKeepHalf = plateBaseHalf + PYRAMID_KEEP_OUT_MARGIN;
+    while (placed < count) {
+      let sx = 0;
+      let sz = 0;
+      for (let r = 0; r < SCATTER_MAX_RETRIES; r += 1) {
+        sx = rng.range(xMin, xMax);
+        sz = rng.range(zMin, zMax);
+        const inPusher =
+          Math.abs(sx - pusherX) < pusherKeepHalf && Math.abs(sz - pusherZ) < pusherKeepHalf;
+        const inPlate =
+          Math.abs(sx - plateX) < plateKeepHalf && Math.abs(sz - plateZ) < plateKeepHalf;
+        if (!inPusher && !inPlate) break;
+      }
+      const y = SCATTER_MIN_Y + rng.next() * SCATTER_Y_RANGE;
+      const coin = coinPool.spawn(sx, y, sz);
       if (!coin) break;
       placed += 1;
+    }
+    return placed;
+  }
+
+  /**
+   * Place a square-base pyramid of coins, layer L from the bottom holding
+   * (layers - L)² coins arranged in a grid of pitch `2.05 × coinRadius`.
+   * Each layer is lifted by `coinThickness` plus a small gap so the stack
+   * settles cleanly under gravity. Returns the number of coins placed,
+   * never exceeding `maxCoins`.
+   */
+  private placePyramid(
+    coinPool: CoinPool,
+    centerX: number,
+    centerZ: number,
+    baseY: number,
+    coinRadius: number,
+    coinThickness: number,
+    layers: number,
+    maxCoins: number,
+  ): number {
+    const SPACING_MULT = 2.05;
+    const LAYER_GAP = 0.001;
+    const LIFT = 0.003;
+    const spacing = coinRadius * SPACING_MULT;
+    const layerStep = coinThickness + LAYER_GAP;
+    let placed = 0;
+    for (let l = 0; l < layers; l += 1) {
+      if (placed >= maxCoins) return placed;
+      const side = layers - l;
+      const halfExtent = (side - 1) * spacing * HALF;
+      const y = baseY + LIFT + coinThickness * HALF + l * layerStep;
+      for (let i = 0; i < side; i += 1) {
+        for (let j = 0; j < side; j += 1) {
+          if (placed >= maxCoins) return placed;
+          const x = centerX - halfExtent + i * spacing;
+          const z = centerZ - halfExtent + j * spacing;
+          const coin = coinPool.spawn(x, y, z);
+          if (!coin) return placed;
+          placed += 1;
+        }
+      }
     }
     return placed;
   }

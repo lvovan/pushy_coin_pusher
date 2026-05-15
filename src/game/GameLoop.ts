@@ -9,6 +9,8 @@ import { FixedStepAccumulator, now } from '../util/time';
 import type { PhysicsWorld, SensorEvent, ContactBetween } from './PhysicsWorld';
 
 export type StepCallback = (stepMs: number) => void;
+export type RenderCallback = (dtMs: number, alpha: number) => void;
+export type FrameCallback = () => void;
 export type SensorCallback = (e: SensorEvent) => void;
 export type ContactCallback = (c: ContactBetween) => void;
 
@@ -20,7 +22,8 @@ export class GameLoop {
   private readonly accumulator: FixedStepAccumulator;
   private readonly preStepCallbacks: StepCallback[] = [];
   private readonly postStepCallbacks: StepCallback[] = [];
-  private readonly renderCallbacks: StepCallback[] = [];
+  private readonly beforeFirstStepCallbacks: FrameCallback[] = [];
+  private readonly renderCallbacks: RenderCallback[] = [];
   private sensorCallback: SensorCallback | undefined;
   private contactCallback: ContactCallback | undefined;
 
@@ -40,7 +43,16 @@ export class GameLoop {
     this.postStepCallbacks.push(cb);
   }
 
-  onRender(cb: StepCallback): void {
+  /**
+   * Fires once per rAF tick *before* the first physics substep of that tick,
+   * but only when at least one substep will run. Renderers use this hook to
+   * snapshot the current pose as "previous" for render-time interpolation.
+   */
+  onBeforeFirstStep(cb: FrameCallback): void {
+    this.beforeFirstStepCallbacks.push(cb);
+  }
+
+  onRender(cb: RenderCallback): void {
     this.renderCallbacks.push(cb);
   }
 
@@ -77,13 +89,17 @@ export class GameLoop {
 
     const steps = this.accumulator.step(delta);
     const stepMs = this.accumulator.stepMs;
+    if (steps > 0) {
+      for (const cb of this.beforeFirstStepCallbacks) cb();
+    }
     for (let i = 0; i < steps; i += 1) {
       for (const cb of this.preStepCallbacks) cb(stepMs);
       this.physics.step(this.sensorCallback, this.contactCallback);
       for (const cb of this.postStepCallbacks) cb(stepMs);
     }
 
-    for (const cb of this.renderCallbacks) cb(delta);
+    const alpha = this.accumulator.alpha;
+    for (const cb of this.renderCallbacks) cb(delta, alpha);
     this.renderer.render();
   }
 }

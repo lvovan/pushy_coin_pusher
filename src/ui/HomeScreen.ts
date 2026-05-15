@@ -19,10 +19,11 @@ export class HomeScreen {
     this.root.className = 'screen home-screen';
     this.root.innerHTML = `
       <div class="screen-inner">
-        <h1 class="title">Pushy</h1>
+        <h1 class="title">🪙 Pushy 🪙</h1>
         <p class="subtitle">Tap to drop. Get the valuables to win.</p>
         <button class="btn primary" data-action="start">Start</button>
         <button class="btn" data-action="resume" disabled>Resume</button>
+        <p class="home-footer">© 2026, Luc Vo Van - Built with AI</p>
       </div>
     `;
     const startBtn = this.root.querySelector('[data-action="start"]') as HTMLButtonElement;

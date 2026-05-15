@@ -71,8 +71,7 @@ export class ValuablePool {
       }
       colDesc = colDesc
         .setFriction(gameBalance.physics.valuableFriction)
-        .setRestitution(gameBalance.physics.valuableRestitution)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+        .setRestitution(gameBalance.physics.valuableRestitution);
       const col = world.world.createCollider(colDesc, body);
       body.sleep();
       this.handleToIndex.set(col.handle, index);

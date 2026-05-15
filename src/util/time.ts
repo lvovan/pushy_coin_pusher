@@ -42,4 +42,14 @@ export class FixedStepAccumulator {
   reset(): void {
     this.accumulatorMs = 0;
   }
+
+  /**
+   * Fraction of a step remaining in the accumulator at the moment of the
+   * call (range [0, 1)). Used by the renderer to interpolate body poses
+   * between the previous and current physics states, giving smooth motion on
+   * displays that refresh faster than the physics rate (e.g. 120 Hz phones).
+   */
+  get alpha(): number {
+    return this.accumulatorMs / this.stepMs;
+  }
 }

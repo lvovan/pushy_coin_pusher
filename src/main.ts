@@ -16,6 +16,7 @@ import { SaveScheduler } from './persistence/SaveScheduler';
 import { SaveStore } from './persistence/SaveStore';
 import { buildSaveState } from './persistence/snapshot';
 import { CoinInstances } from './render/CoinInstances';
+import { Confetti } from './render/Confetti';
 import { installLighting } from './render/Lighting';
 import { PusherMesh } from './render/PusherMesh';
 import { Renderer } from './render/Renderer';
@@ -64,10 +65,13 @@ async function main(): Promise<void> {
   const pusherMesh = new PusherMesh(renderer.scene, pusher);
   const coinInstances = new CoinInstances(renderer.scene);
   const valuableMeshes = new ValuableMeshes(renderer.scene, valuablePool);
+  const confetti = new Confetti(renderer.scene);
   void trayMeshes;
 
   const state = new GameState();
-  const winZone = new WinZone(tray, coinPool, state, valuablePool);
+  const winZone = new WinZone(tray, coinPool, state, valuablePool, (x, y, z) => {
+    confetti.burst(x, y, z);
+  });
 
   // Invariant: the number of physical coins inside the collection bin equals
   // `state.coinBank` (the HUD counter). Maintained by:
@@ -100,8 +104,11 @@ async function main(): Promise<void> {
   hud.hide();
 
   // Mute button is always visible (Home, Playing, Game Over) so the player
-  // can silence audio at any time. State is persisted to localStorage.
-  const muteButton = new MuteButton(overlay, audio);
+  // can silence audio at any time. It is mounted inside the HUD next to the
+  // Coins counter; the HUD root stays present even when its data rows are
+  // hidden so the mute toggle remains accessible. State is persisted to
+  // localStorage.
+  const muteButton = new MuteButton(hud.getMuteSlot(), audio);
   void muteButton;
 
   const slotButtons = new DropSlotButtons(overlay, drops, renderer);
@@ -119,6 +126,7 @@ async function main(): Promise<void> {
       for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
       for (const slot of [...valuablePool.active()]) valuablePool.releaseByIndex(slot.index);
       winZone.reset();
+      confetti.reset();
       saveStore.clear();
       state.beginFreshSession();
       tray.placeValuables(valuablePool);
@@ -138,8 +146,18 @@ async function main(): Promise<void> {
   loop.onPreStep((stepMs) => {
     pusher.update(stepMs);
   });
+  loop.onBeforeFirstStep(() => {
+    // Snapshot the pose every renderer interpolates against once per rAF
+    // tick, before the first physics substep of the tick.
+    coinInstances.snapshotPrev(coinPool);
+    valuableMeshes.snapshotPrev(valuablePool);
+    pusherMesh.snapshotPrev();
+  });
   loop.onPostStep(() => {
     winZone.stepSideFallOff();
+    coinInstances.captureCurrent(coinPool);
+    valuableMeshes.captureCurrent(valuablePool);
+    pusherMesh.captureCurrent();
     if (state.mode === 'playing' && state.coinBank === 0 && coinPool.allAtRest()) {
       state.triggerGameOver();
     }
@@ -149,21 +167,22 @@ async function main(): Promise<void> {
   });
   loop.onContact((c) => {
     if (!audioArmed) return;
-    const coinA = coinPool.findByColliderHandle(c.handleA);
-    const coinB = coinPool.findByColliderHandle(c.handleB);
-    // Bin-landing clink: exactly one side is a coin, the other is the bin floor.
-    if (coinA && coinB) return;
-    const coin = coinA ?? coinB;
+    // After moving COLLISION_EVENTS to the bin floor + win sensor only, contact
+    // events are emitted exclusively when a coin/valuable touches the bin
+    // floor. Coin-on-coin contacts no longer fire, so we don't need to filter
+    // them out here.
+    const coin = coinPool.findByColliderHandle(c.handleA) ?? coinPool.findByColliderHandle(c.handleB);
     if (!coin) return;
-    const otherHandle = coinA ? c.handleB : c.handleA;
+    const otherHandle = c.handleA === coin.colliderHandle ? c.handleB : c.handleA;
     if (otherHandle === tray.handles.binFloorHandle) {
       audio.playClink();
     }
   });
-  loop.onRender((dtMs) => {
-    pusherMesh.sync();
-    coinInstances.syncFromPool(coinPool);
-    valuableMeshes.syncFromPool(valuablePool);
+  loop.onRender((dtMs, alpha) => {
+    pusherMesh.syncRender(alpha);
+    coinInstances.syncRender(coinPool, alpha);
+    valuableMeshes.syncRender(valuablePool, alpha);
+    confetti.update(dtMs);
     shoveGesture.update(dtMs);
   });
 
@@ -185,6 +204,7 @@ async function main(): Promise<void> {
       for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
       for (const slot of [...valuablePool.active()]) valuablePool.releaseByIndex(slot.index);
       winZone.reset();
+      confetti.reset();
       state.beginFreshSession();
       tray.placeValuables(valuablePool);
       resetAudioArming();
@@ -199,6 +219,7 @@ async function main(): Promise<void> {
       const save = saveStore.load();
       if (!save) return;
       winZone.reset();
+      confetti.reset();
       resetAudioArming();
       restoreFromSave(save, coinPool, pusher, state, valuablePool);
       // The save only persists bank + valuables counters and free body poses,

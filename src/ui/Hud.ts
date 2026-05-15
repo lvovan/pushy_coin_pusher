@@ -10,6 +10,7 @@ export class Hud {
   private readonly root: HTMLElement;
   private readonly bankEl: HTMLElement;
   private readonly valuablesEl: HTMLElement;
+  private readonly muteSlot: HTMLElement;
   private lastBank = Number.NaN;
   private lastValuables = Number.NaN;
   private unsubscribe: (() => void) | undefined;
@@ -18,12 +19,21 @@ export class Hud {
     this.root = document.createElement('div');
     this.root.className = 'hud';
     this.root.innerHTML = `
-      <div class="hud-row"><span class="hud-label">Coins</span><span class="hud-value" data-bank>0</span></div>
+      <div class="hud-left">
+        <div class="hud-row"><span class="hud-label">Coins</span><span class="hud-value" data-bank>0</span></div>
+        <div class="hud-mute-slot" data-mute-slot></div>
+      </div>
       <div class="hud-row"><span class="hud-label">Valuables</span><span class="hud-value" data-valuables>0</span></div>
     `;
     this.bankEl = this.root.querySelector('[data-bank]') as HTMLElement;
     this.valuablesEl = this.root.querySelector('[data-valuables]') as HTMLElement;
+    this.muteSlot = this.root.querySelector('[data-mute-slot]') as HTMLElement;
     parent.appendChild(this.root);
+  }
+
+  /** Container that the MuteButton mounts into so it sits next to the Coins counter. */
+  getMuteSlot(): HTMLElement {
+    return this.muteSlot;
   }
 
   attach(state: GameState): void {
@@ -40,11 +50,11 @@ export class Hud {
   }
 
   show(): void {
-    this.root.style.display = '';
+    this.root.classList.remove('is-hidden');
   }
 
   hide(): void {
-    this.root.style.display = 'none';
+    this.root.classList.add('is-hidden');
   }
 
   dispose(): void {

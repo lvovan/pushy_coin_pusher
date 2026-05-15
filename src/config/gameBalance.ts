@@ -83,6 +83,18 @@ export interface GameBalance {
     readonly ambientIntensity: number;
     readonly directionalIntensity: number;
   };
+  readonly confetti: {
+    readonly particlesPerBurst: number;
+    readonly maxBursts: number;
+    readonly particleSize: number;
+    readonly particleLifeMs: number;
+    readonly upwardVelocity: number;
+    readonly upwardVelocityJitter: number;
+    readonly lateralVelocity: number;
+    readonly gravity: number;
+    readonly spinVelocity: number;
+    readonly colors: readonly number[];
+  };
 }
 
 export const gameBalance: GameBalance = Object.freeze({
@@ -97,7 +109,7 @@ export const gameBalance: GameBalance = Object.freeze({
     perSlotCooldownMs: 250,
     slotPositionsX: Object.freeze([-0.133, 0, 0.133]) as readonly [number, number, number],
     slotSpawnJitter: 0.01,
-    initialPileCount: 325,
+    initialPileCount: 200,
   }),
   pusher: Object.freeze({
     strokePeriodMs: 3429,
@@ -110,8 +122,8 @@ export const gameBalance: GameBalance = Object.freeze({
     coinMass: 0.008,
     coinFriction: 0.9,
     coinRestitution: 0.05,
-    coinRadius: 0.018,
-    coinThickness: 0.0045,
+    coinRadius: 0.0225,
+    coinThickness: 0.005625,
     valuableMassMultipliers: Object.freeze([0.5, 1.0, 2.0]) as readonly [number, number, number],
     valuableFriction: 0.95,
     valuableRestitution: 0.15,
@@ -148,7 +160,7 @@ export const gameBalance: GameBalance = Object.freeze({
     coinSideColor: 0x3a2410,
     coinMetalness: 1.0,
     coinRoughness: 0.18,
-    valuableColors: Object.freeze([0xff5050, 0xffe14a, 0x4aa3ff]) as readonly [
+    valuableColors: Object.freeze([0xff5050, 0x4ade80, 0x4aa3ff]) as readonly [
       number,
       number,
       number,
@@ -159,5 +171,24 @@ export const gameBalance: GameBalance = Object.freeze({
     backgroundColor: 0x0b0d10,
     ambientIntensity: 0.35,
     directionalIntensity: 1.6,
+  }),
+  confetti: Object.freeze({
+    particlesPerBurst: 28,
+    maxBursts: 6,
+    particleSize: 0.008,
+    particleLifeMs: 1200,
+    upwardVelocity: 0.9,
+    upwardVelocityJitter: 0.35,
+    lateralVelocity: 0.55,
+    gravity: -1.8,
+    spinVelocity: 8,
+    colors: Object.freeze([
+      0xff5050,
+      0x4ade80,
+      0x4aa3ff,
+      0xffd24a,
+      0xff8ad8,
+      0xffffff,
+    ]) as readonly number[],
   }),
 });

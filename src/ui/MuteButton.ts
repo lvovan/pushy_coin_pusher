@@ -39,9 +39,12 @@ export class MuteButton {
 
   private readPersisted(): boolean {
     try {
-      return window.localStorage.getItem(STORAGE_KEY) === '1';
+      const v = window.localStorage.getItem(STORAGE_KEY);
+      // Default to muted on first launch; respect explicit unmute thereafter.
+      if (v === null) return true;
+      return v === '1';
     } catch {
-      return false;
+      return true;
     }
   }
 

@@ -16,8 +16,24 @@ const CAMERA_HEIGHT = 0.7;
 const CAMERA_DEPTH = 0.85;
 const CAMERA_LOOK_Y = -0.08;
 const CAMERA_LOOK_Z = 0.06;
-const DPR_CLAMP = 2;
+const DPR_CLAMP_DESKTOP = 2;
+const DPR_CLAMP_TOUCH = 1.5;
 const TONE_MAPPING_EXPOSURE = 1.15;
+
+/**
+ * True if the device is touch-first (coarse pointer or has touch points).
+ * We use the same heuristic on mobile + tablets to drop MSAA and clamp DPR,
+ * both of which are dominant costs on tiled GPUs.
+ */
+function isTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  const nav = window.navigator;
+  if (nav && typeof nav.maxTouchPoints === 'number' && nav.maxTouchPoints > 0) return true;
+  if (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) {
+    return true;
+  }
+  return 'ontouchstart' in window;
+}
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -25,13 +41,19 @@ export class Renderer {
   readonly camera: THREE.PerspectiveCamera;
 
   constructor(canvas: HTMLCanvasElement) {
+    const touch = isTouchDevice();
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      // MSAA is the dominant fragment-shader cost on tiled mobile GPUs. We
+      // skip it on touch devices and rely on the smaller DPR ceiling plus
+      // built-in shader filtering to keep edges acceptable.
+      antialias: !touch,
       alpha: false,
       powerPreference: 'high-performance',
+      stencil: false,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, DPR_CLAMP));
+    const dprCap = touch ? DPR_CLAMP_TOUCH : DPR_CLAMP_DESKTOP;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap));
     this.renderer.setClearColor(gameBalance.render.backgroundColor, 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;

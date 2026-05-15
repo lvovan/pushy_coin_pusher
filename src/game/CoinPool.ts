@@ -48,8 +48,7 @@ export class CoinPool {
       const colDesc = RAPIER.ColliderDesc.cylinder(thickness * HALF, radius)
         .setDensity(mass / (Math.PI * radius * radius * thickness))
         .setFriction(friction)
-        .setRestitution(restitution)
-        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+        .setRestitution(restitution);
       const col = world.world.createCollider(colDesc, body);
       body.sleep();
       this.handleToIndex.set(col.handle, index);
