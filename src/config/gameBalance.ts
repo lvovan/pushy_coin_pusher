@@ -158,11 +158,15 @@ export const gameBalance: GameBalance = Object.freeze({
     coinDropVolume: 0.8,
   }),
   limits: Object.freeze({
-    // 200 baseline tray pile + ~75 bin pile cap + headroom for in-flight
-    // drops/wins. Was 750 which preallocated three pools' worth of
-    // Rapier bodies, instance matrices, and broadphase entries unused
-    // in steady-state play.
-    maxActiveCoins: 350,
+    // Sized to the worst-case live body count:
+    //   spawning.initialPileCount (tray prefill, currently 300)
+    // + bin.physicalCap          (bin prefill at session start, max 75)
+    // + ~50 drop/win headroom    (in-flight coins between drop and bin
+    //                              entry / side fall-off recycle).
+    // Undersizing this cap silently breaks drops: `coinPool.spawn`
+    // returns `null` once the pool is full, the bank stays unchanged,
+    // and the player sees the slot's white flash with no coin produced.
+    maxActiveCoins: 425,
     maxActiveValuables: 16,
   }),
   render: Object.freeze({

@@ -79,9 +79,19 @@ export class DropSlotButtons {
       }
     };
 
+    // Restart the column's flash animation. Called only after a tap
+    // actually spawned a coin so the visual cue is never out-of-sync
+    // with reality (e.g. when the bank is empty or the pool is full).
+    const playFlash = (): void => {
+      entry.flash.classList.remove('is-flashing');
+      // Force reflow so re-adding the class restarts the animation.
+      void entry.flash.offsetWidth;
+      entry.flash.classList.add('is-flashing');
+    };
+
     const tick = (): void => {
       if (!entry.pressed) return;
-      drops.tapSlot(entry.id, performance.now());
+      if (drops.tapSlot(entry.id, performance.now())) playFlash();
       entry.rafId = requestAnimationFrame(tick);
     };
 
@@ -89,13 +99,8 @@ export class DropSlotButtons {
       e.preventDefault();
       if (entry.pressed) return;
       entry.pressed = true;
-      // Restart the flash animation each press.
-      entry.flash.classList.remove('is-flashing');
-      // Force reflow so re-adding the class restarts the animation.
-      void entry.flash.offsetWidth;
-      entry.flash.classList.add('is-flashing');
       entry.zone.setPointerCapture?.(e.pointerId);
-      drops.tapSlot(entry.id, performance.now());
+      if (drops.tapSlot(entry.id, performance.now())) playFlash();
       entry.rafId = requestAnimationFrame(tick);
     };
 
