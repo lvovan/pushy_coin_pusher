@@ -115,4 +115,19 @@ export class CoinPool {
     }
     return true;
   }
+
+  /**
+   * Add a uniform horizontal velocity delta to every active coin \u2014 the
+   * physics-side effect of a player "shove" of the cabinet. From the
+   * playfield's reference frame the cabinet jerks in one direction, so every
+   * loose coin inherits an opposite-direction velocity bump (inertia), the
+   * same principle as nudging a pinball machine.
+   */
+  applyShove(dvx: number, dvz: number): void {
+    for (const slot of this.active()) {
+      const lv = slot.body.linvel();
+      slot.body.setLinvel({ x: lv.x + dvx, y: lv.y, z: lv.z + dvz }, true);
+      slot.body.wakeUp();
+    }
+  }
 }

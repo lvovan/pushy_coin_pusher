@@ -9,13 +9,13 @@ import type { Pusher } from '../game/Pusher';
 
 const HALF = 0.5;
 const PUSHER_DEPTH = 0.45;
-const PUSHER_HEIGHT = 0.025;
-const PUSHER_WIDTH_MARGIN = 0.04;
+const PUSHER_HEIGHT = 0.03375;
+const PUSHER_WIDTH_MARGIN = 0.02; // matches Tray's WALL_THICKNESS so the visual pusher sits flush between the inner wall faces
 const PUSHER_FLOOR_EMBED = 0.005;
-// Must match Pusher.ts (game) — visual lip atop the pusher's front edge.
-const PUSHER_LIP_DEPTH = 0.012;
-const PUSHER_LIP_THICKNESS = 0.004;
-const PUSHER_LIP_SLANT_RAD = 0.26;
+// Must match Pusher.ts (game) — seamless slanted front ramp.
+const PUSHER_LIP_LENGTH = 0.05;
+const PUSHER_LIP_THICKNESS = 0.0015;
+const PUSHER_LIP_SLANT_RAD = 0.12;
 
 export class PusherMesh {
   readonly mesh: THREE.Mesh;
@@ -31,13 +31,21 @@ export class PusherMesh {
     this.mesh = new THREE.Mesh(geom, mat);
     this.mesh.position.set(0, PUSHER_HEIGHT * HALF - PUSHER_FLOOR_EMBED, gameBalance.pusher.basePositionZ);
 
-    // Front-edge lip — child mesh, moves with the pusher.
-    const lipGeom = new THREE.BoxGeometry(width, PUSHER_LIP_THICKNESS, PUSHER_LIP_DEPTH);
+    // Front-edge slanted ramp — child mesh, moves with the pusher. Back-top
+    // edge meets the pusher top flush; back-bottom is hidden inside the
+    // pusher so the seam is invisible.
+    const lipCos = Math.cos(PUSHER_LIP_SLANT_RAD);
+    const lipSin = Math.sin(PUSHER_LIP_SLANT_RAD);
+    const lipGeom = new THREE.BoxGeometry(width, PUSHER_LIP_THICKNESS, PUSHER_LIP_LENGTH);
     const lipMesh = new THREE.Mesh(lipGeom, mat);
     lipMesh.position.set(
       0,
-      PUSHER_HEIGHT * HALF + PUSHER_LIP_THICKNESS * HALF,
-      PUSHER_DEPTH * HALF - PUSHER_LIP_DEPTH * HALF,
+      PUSHER_HEIGHT * HALF -
+        PUSHER_LIP_THICKNESS * HALF * lipCos +
+        PUSHER_LIP_LENGTH * HALF * lipSin,
+      PUSHER_DEPTH * HALF -
+        PUSHER_LIP_LENGTH * HALF * lipCos +
+        PUSHER_LIP_THICKNESS * HALF * lipSin,
     );
     lipMesh.rotation.x = -PUSHER_LIP_SLANT_RAD;
     this.mesh.add(lipMesh);

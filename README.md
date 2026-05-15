@@ -15,8 +15,23 @@ plain DOM driven from TypeScript.
 - Object pools: 250 coins, 16 valuables, zero per-frame allocations
 - Persistent save (localStorage) with 500 ms debounce + page-hide flush
 - Home / HUD / Game Over overlays with Start, Resume, Continue, Play Again
-- Token-bucket throttled clink audio (optional — degrades gracefully)
+- Token-bucket throttled clink audio with HUD mute toggle (optional — degrades gracefully)
+- Pinball-style **shove gesture**: press-and-drag anywhere to nudge the cabinet — coins inherit the inertial impulse and the camera shakes briefly
+- Full-screen drop-slot tap zones (left / center / right thirds of the viewport)
 - Portrait-first responsive layout, ≥ 44 × 44 px tap targets
+
+## Controls
+
+| Action | Input |
+|--------|-------|
+| Drop a coin | Tap (or click) the left / center / right third of the play area |
+| Hold-drop | Press-and-hold a drop zone — coins flow at the per-slot cooldown rate |
+| Shove the cabinet | Press-and-drag (≥ 30 px within 800 ms) anywhere on the play area, then release |
+| Mute / unmute audio | Tap the speaker icon in the HUD |
+
+The shove gesture and the drop-slot taps share the same pointer surface: a quick
+tap drops, a drag-then-release shoves. Shove magnitude scales with drag distance
+(≈ 200 px per 1 m/s, capped at 0.8 m/s) and has a 200 ms cooldown.
 
 ## Quick start
 
@@ -57,12 +72,13 @@ Performance Gate. Serve it with `npm run dev` and navigate to
 
 ```text
 src/
-  audio/         AudioBus (single AudioContext, throttled clinks)
+  audio/         AudioBus (single AudioContext, throttled clinks, shove SFX)
   config/        gameBalance.ts — all tunables live here
   game/          Pure logic: physics, pools, win zone, drop slots, persistence
   persistence/   localStorage save / load / debounced scheduler / snapshot
   render/        Three.js renderer, lighting, instanced coin mesh, valuables
-  ui/            DOM overlays: Home, HUD, Game Over, drop-slot buttons
+  ui/            DOM overlays: Home, HUD, Game Over, drop-slot buttons,
+                 mute button, shove gesture
   util/          rng (mulberry32), fixed-step accumulator
   main.ts        Bootstrap & wiring
 tests/

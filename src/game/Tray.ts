@@ -15,12 +15,15 @@ const HALF = 0.5;
 const WALL_THICKNESS = 0.02; // physical wall thickness in meters; not gameplay-balance
 const SIDE_LOSS_MARGIN = 0.05;
 const SIDE_LOSS_Y = -0.5;
-// Slanted retaining lip along the plate's front (player-facing) edge. A real
-// arcade coin pusher has a slight upward rim here so coins resist falling
-// into the collection bin without being firmly pushed.
-const PLATE_LIP_DEPTH = 0.012;
-const PLATE_LIP_THICKNESS = 0.004;
-const PLATE_LIP_SLANT_RAD = 0.26; // ~15°
+// Slanted retaining ramp along the plate's front (player-facing) edge: a
+// thin gently-tilted slab whose back-top edge meets the plate's top
+// surface flush (seamless) and whose back-bottom edge is hidden inside
+// the plate. Coins climbing forward see one continuous ramp rising to a
+// small lip at the front, mirroring a real arcade coin pusher's slanted
+// plate edge.
+const PLATE_LIP_LENGTH = 0.05;
+const PLATE_LIP_THICKNESS = 0.0015;
+const PLATE_LIP_SLANT_RAD = 0.12; // ~7°
 
 export interface TrayHandles {
   floorHandle: number;
@@ -82,22 +85,30 @@ export class Tray {
       rightBody,
     );
 
-    // Plate front lip: a thin slanted ramp at the plate's front edge, tilted
-    // ~15° front-up. Coins must overcome a small upward step to fall into the
-    // collection bin, mirroring the rim on a real arcade coin pusher's plate.
+    // Plate front ramp: thin slanted slab whose back-top edge sits flush
+    // with the plate surface and whose back-bottom edge is hidden inside
+    // the plate body, producing a seamless join. Rises gently to a small
+    // lip at the plate's front edge.
+    const plateLipCos = Math.cos(PLATE_LIP_SLANT_RAD);
+    const plateLipSin = Math.sin(PLATE_LIP_SLANT_RAD);
     const plateLipSinH = Math.sin(PLATE_LIP_SLANT_RAD * HALF);
     const plateLipCosH = Math.cos(PLATE_LIP_SLANT_RAD * HALF);
+    const plateLipCenterY =
+      this.floorY -
+      PLATE_LIP_THICKNESS * HALF * plateLipCos +
+      PLATE_LIP_LENGTH * HALF * plateLipSin;
+    const plateLipCenterZ =
+      this.halfDepth -
+      PLATE_LIP_LENGTH * HALF * plateLipCos +
+      PLATE_LIP_THICKNESS * HALF * plateLipSin;
     const plateLipBody = world.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    plateLipBody.setTranslation(
-      { x: 0, y: PLATE_LIP_THICKNESS * HALF, z: this.halfDepth - PLATE_LIP_DEPTH * HALF },
-      true,
-    );
+    plateLipBody.setTranslation({ x: 0, y: plateLipCenterY, z: plateLipCenterZ }, true);
     plateLipBody.setRotation({ x: -plateLipSinH, y: 0, z: 0, w: plateLipCosH }, true);
     world.world.createCollider(
       RAPIER.ColliderDesc.cuboid(
         this.halfWidth,
         PLATE_LIP_THICKNESS * HALF,
-        PLATE_LIP_DEPTH * HALF,
+        PLATE_LIP_LENGTH * HALF,
       ).setFriction(gameBalance.physics.coinFriction),
       plateLipBody,
     );

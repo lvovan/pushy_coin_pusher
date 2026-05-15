@@ -13,10 +13,10 @@ import type { Tray } from '../game/Tray';
 const HALF = 0.5;
 const WALL_THICKNESS = 0.02;
 const FLOOR_THICKNESS = 0.01;
-// Plate front-edge lip (must match physics dimensions in src/game/Tray.ts).
-const PLATE_LIP_DEPTH = 0.012;
-const PLATE_LIP_THICKNESS = 0.004;
-const PLATE_LIP_SLANT_RAD = 0.26;
+// Plate front-edge ramp (must match physics dimensions in src/game/Tray.ts).
+const PLATE_LIP_LENGTH = 0.05;
+const PLATE_LIP_THICKNESS = 0.0015;
+const PLATE_LIP_SLANT_RAD = 0.12;
 
 // Coin-collection bin visuals — physical floor + walls live in src/game/Tray.ts.
 // Kept intentionally dark and matte so the bin reads as a dimmer "well" below
@@ -81,13 +81,19 @@ export class TrayMeshes {
     right.position.set(width * HALF, wallHeight * HALF, 0);
     this.group.add(right);
 
-    // Plate front lip — slanted retaining rim at the plate's front edge,
-    // mirrors the physics ramp in src/game/Tray.ts.
+    // Plate front ramp — seamless slanted slab; back-top edge meets the
+    // plate surface flush, back-bottom is hidden inside the plate.
+    const plateLipCos = Math.cos(PLATE_LIP_SLANT_RAD);
+    const plateLipSin = Math.sin(PLATE_LIP_SLANT_RAD);
     const plateLip = new THREE.Mesh(
-      new THREE.BoxGeometry(width, PLATE_LIP_THICKNESS, PLATE_LIP_DEPTH),
+      new THREE.BoxGeometry(width, PLATE_LIP_THICKNESS, PLATE_LIP_LENGTH),
       trayMat,
     );
-    plateLip.position.set(0, PLATE_LIP_THICKNESS * HALF, depth * HALF - PLATE_LIP_DEPTH * HALF);
+    plateLip.position.set(
+      0,
+      -PLATE_LIP_THICKNESS * HALF * plateLipCos + PLATE_LIP_LENGTH * HALF * plateLipSin,
+      depth * HALF - PLATE_LIP_LENGTH * HALF * plateLipCos + PLATE_LIP_THICKNESS * HALF * plateLipSin,
+    );
     plateLip.rotation.x = -PLATE_LIP_SLANT_RAD;
     this.group.add(plateLip);
 

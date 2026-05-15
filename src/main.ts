@@ -27,6 +27,7 @@ import { GameOverOverlay } from './ui/GameOverOverlay';
 import { HomeScreen } from './ui/HomeScreen';
 import { Hud } from './ui/Hud';
 import { MuteButton } from './ui/MuteButton';
+import { ShoveGesture } from './ui/ShoveGesture';
 
 async function main(): Promise<void> {
   const canvas = document.getElementById('stage');
@@ -106,6 +107,13 @@ async function main(): Promise<void> {
   const slotButtons = new DropSlotButtons(overlay, drops, renderer);
   slotButtons.hide();
 
+  // Press-and-drag anywhere on the screen "shoves" the cabinet (pinball-
+  // style nudge) — every active coin gets an opposite-direction velocity
+  // bump, the camera briefly shifts in the drag direction, and shove.ogg
+  // plays. The gesture is tracked at the window level so it co-exists with
+  // the drop-slot tap zones (tap = drop, press-and-drag = shove).
+  const shoveGesture = new ShoveGesture(coinPool, audio, renderer);
+
   const gameOver = new GameOverOverlay(overlay, {
     onPlayAgain() {
       for (const slot of [...coinPool.active()]) coinPool.releaseByIndex(slot.index);
@@ -152,10 +160,11 @@ async function main(): Promise<void> {
       audio.playClink();
     }
   });
-  loop.onRender(() => {
+  loop.onRender((dtMs) => {
     pusherMesh.sync();
     coinInstances.syncFromPool(coinPool);
     valuableMeshes.syncFromPool(valuablePool);
+    shoveGesture.update(dtMs);
   });
 
   // Coins that win at the front sensor stay as physics bodies and pile up

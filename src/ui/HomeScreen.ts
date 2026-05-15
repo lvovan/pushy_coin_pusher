@@ -20,7 +20,7 @@ export class HomeScreen {
     this.root.innerHTML = `
       <div class="screen-inner">
         <h1 class="title">Pushy</h1>
-        <p class="subtitle">Tap to drop. Push to win.</p>
+        <p class="subtitle">Tap to drop. Get the valuables to win.</p>
         <button class="btn primary" data-action="start">Start</button>
         <button class="btn" data-action="resume" disabled>Resume</button>
       </div>

@@ -17,12 +17,14 @@ const MAX_CONCURRENT_SOURCES = 10;
 export interface AudioBusOptions {
   readonly coinDropUrl?: string;
   readonly clinkUrl?: string;
+  readonly shoveUrl?: string;
 }
 
 export class AudioBus {
   private ctx: AudioContext | undefined;
   private coinDropBuffer: AudioBuffer | undefined;
   private clinkBuffer: AudioBuffer | undefined;
+  private shoveBuffer: AudioBuffer | undefined;
   private gain: GainNode | undefined;
   private muted = false;
 
@@ -51,9 +53,11 @@ export class AudioBus {
       this.gain.connect(this.ctx.destination);
       const coinUrl = this.options.coinDropUrl ?? '/audio/coin-drop.ogg';
       const clinkUrl = this.options.clinkUrl ?? '/audio/clink.ogg';
-      [this.coinDropBuffer, this.clinkBuffer] = await Promise.all([
+      const shoveUrl = this.options.shoveUrl ?? '/audio/shove.ogg';
+      [this.coinDropBuffer, this.clinkBuffer, this.shoveBuffer] = await Promise.all([
         this.tryLoad(coinUrl),
         this.tryLoad(clinkUrl),
+        this.tryLoad(shoveUrl),
       ]);
     } catch {
       // Audio is best-effort — never block gameplay.
@@ -85,6 +89,12 @@ export class AudioBus {
     // User-action sound — always play, bypassing the concurrency cap so a
     // burst of physics clinks can never silently swallow the drop tap response.
     this.playBuffer(this.coinDropBuffer, PITCH_BASE, PITCH_BASE, true);
+  }
+
+  /** Shove / nudge feedback. User-action sound — bypasses the concurrency cap
+   * so it always plays regardless of how many clinks are queued. */
+  playShove(): void {
+    this.playBuffer(this.shoveBuffer, PITCH_BASE, PITCH_BASE, true);
   }
 
   /** Throttled via token bucket (Phase 0 R8). `volume` scales this call only (0..1). */
