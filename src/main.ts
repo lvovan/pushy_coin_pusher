@@ -88,8 +88,15 @@ async function main(): Promise<void> {
   //   - winZone.handleSensor() — wins add a coin to the bin AND the bank
   //   - releaseOneBinCoinPerDrop() — every player drop releases one bin coin
   const prefillBinToBank = (count: number): void => {
-    const indices = tray.prefillBin(coinPool, count);
-    for (const i of indices) winZone.addBinCoin(i);
+    const slots = tray.prefillBin(coinPool, count);
+    for (const slot of slots) {
+      winZone.addBinCoin(slot.index);
+      // These coins are synthetic — they didn't cross the win sensor, so
+      // their inevitable contact with the bin floor must NOT play a clink.
+      // Pre-mark their collider handles as already-clinked so the contact
+      // handler suppresses the landing sound.
+      clinkedCoinHandles.add(slot.colliderHandle);
+    }
   };
   const releaseOneBinCoinPerDrop = (spawnedCount: number): void => {
     for (let i = 0; i < spawnedCount; i += 1) winZone.releaseOneBinCoin();
@@ -165,21 +172,18 @@ async function main(): Promise<void> {
   loop.onPreStep((stepMs) => {
     pusher.update(stepMs);
   });
-  loop.onBeforeFirstStep(() => {
-    // Snapshot the pose every renderer interpolates against once per rAF
-    // tick, before the first physics substep of the tick.
-    coinInstances.snapshotPrev(coinPool);
-    valuableMeshes.snapshotPrev(valuablePool);
-    pusherMesh.snapshotPrev();
-  });
-  loop.onPostStep(() => {
+  loop.onAfterSteps(() => {
+    // Per-frame (not per-substep) work: side-fall-off cleanup, game-over
+    // poll, and pose-write into the GPU instance buffer. Doing these once
+    // after all substeps collapses Rapier WASM crossings from
+    // (active_count × substeps) to (active_count) per frame.
     winZone.stepSideFallOff();
-    coinInstances.captureCurrent(coinPool);
-    valuableMeshes.captureCurrent(valuablePool);
-    pusherMesh.captureCurrent();
     if (state.mode === 'playing' && state.coinBank === 0 && coinPool.allAtRest()) {
       state.triggerGameOver();
     }
+    pusherMesh.syncRender();
+    coinInstances.syncRender(coinPool);
+    valuableMeshes.syncRender(valuablePool);
   });
   loop.onSensor((e) => {
     winZone.handleSensor(e);
@@ -199,10 +203,7 @@ async function main(): Promise<void> {
       audio.playClink();
     }
   });
-  loop.onRender((dtMs, alpha) => {
-    pusherMesh.syncRender(alpha);
-    coinInstances.syncRender(coinPool, alpha);
-    valuableMeshes.syncRender(valuablePool, alpha);
+  loop.onRender((dtMs) => {
     confetti.update(dtMs);
     shoveGesture.update(dtMs);
     shoveMeter.update(dtMs);

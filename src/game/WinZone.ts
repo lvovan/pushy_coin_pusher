@@ -120,7 +120,18 @@ export class WinZone {
    */
   stepSideFallOff(): number {
     let removed = 0;
-    for (const slot of this.coinPool.active()) {
+    // Snapshot the active set into a local array, then iterate backward so
+    // the pool's swap-pop release during iteration doesn't skip elements.
+    // (The original `for (const slot of pool.active())` form had a latent
+    // skip bug because releasing the current slot moves the last active
+    // element into the current position, which the forward iterator then
+    // walks past.) Allocating one array per frame is acceptable now that
+    // this pass runs once per rAF tick (in onAfterSteps) instead of once
+    // per physics substep.
+    const coinSlots = Array.from(this.coinPool.active());
+    for (let n = coinSlots.length - 1; n >= 0; n -= 1) {
+      const slot = coinSlots[n]!;
+      if (!slot.active) continue;
       const t = slot.body.translation();
       if (this.tray.isOutOfPlay(t.x, t.y)) {
         this.creditedCoins.delete(slot.index);
@@ -130,7 +141,10 @@ export class WinZone {
       }
     }
     if (this.valuablePool) {
-      for (const slot of this.valuablePool.active()) {
+      const vSlots = Array.from(this.valuablePool.active());
+      for (let n = vSlots.length - 1; n >= 0; n -= 1) {
+        const slot = vSlots[n]!;
+        if (!slot.active) continue;
         const t = slot.body.translation();
         if (this.tray.isOutOfPlay(t.x, t.y)) {
           this.creditedValuables.delete(slot.index);

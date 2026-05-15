@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 
   const loop = new GameLoop(physics, renderer);
   loop.onPreStep((dt) => pusher.update(dt));
-  loop.onRender(() => coinInstances.syncFromPool(coinPool));
+  loop.onRender(() => coinInstances.syncRender(coinPool));
 
   let frames = 0;
   let lastWindowMs = performance.now();

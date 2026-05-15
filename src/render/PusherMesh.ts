@@ -42,11 +42,6 @@ const ENGRAVING_ROUGHNESS = 0.55;
 
 export class PusherMesh {
   readonly mesh: THREE.Mesh;
-  private readonly prevPos = new THREE.Vector3();
-  private readonly currPos = new THREE.Vector3();
-  private readonly prevQuat = new THREE.Quaternion();
-  private readonly currQuat = new THREE.Quaternion();
-  private readonly tmpQuat = new THREE.Quaternion();
 
   constructor(scene: THREE.Scene, private readonly pusher: Pusher) {
     const width = gameBalance.tray.width - PUSHER_WIDTH_MARGIN;
@@ -58,8 +53,6 @@ export class PusherMesh {
     });
     this.mesh = new THREE.Mesh(geom, mat);
     this.mesh.position.set(0, PUSHER_HEIGHT * HALF - PUSHER_FLOOR_EMBED, gameBalance.pusher.basePositionZ);
-    this.currPos.copy(this.mesh.position);
-    this.prevPos.copy(this.mesh.position);
 
     // Front-edge slanted ramp — child mesh, moves with the pusher. Back-top
     // edge meets the pusher top flush; back-bottom is hidden inside the
@@ -119,28 +112,13 @@ export class PusherMesh {
     scene.add(this.mesh);
   }
 
-  /** Snapshot current pose into previous in preparation for the next step. */
-  snapshotPrev(): void {
-    this.prevPos.copy(this.currPos);
-    this.prevQuat.copy(this.currQuat);
-  }
-
-  /** Read the current pose from the kinematic body. */
-  captureCurrent(): void {
+  /** Read the current pose from the kinematic body and write it to the
+   * mesh. Render rate is capped at the physics rate, so no prev/curr
+   * interpolation is needed. */
+  syncRender(): void {
     const t = this.pusher.body.translation();
     const r = this.pusher.body.rotation();
-    this.currPos.set(t.x, t.y, t.z);
-    this.currQuat.set(r.x, r.y, r.z, r.w);
-  }
-
-  /** Render-time interpolation; `alpha ∈ [0,1)` from FixedStepAccumulator. */
-  syncRender(alpha: number): void {
-    this.mesh.position.set(
-      this.prevPos.x + (this.currPos.x - this.prevPos.x) * alpha,
-      this.prevPos.y + (this.currPos.y - this.prevPos.y) * alpha,
-      this.prevPos.z + (this.currPos.z - this.prevPos.z) * alpha,
-    );
-    this.tmpQuat.copy(this.prevQuat).slerp(this.currQuat, alpha);
-    this.mesh.quaternion.copy(this.tmpQuat);
+    this.mesh.position.set(t.x, t.y, t.z);
+    this.mesh.quaternion.set(r.x, r.y, r.z, r.w);
   }
 }

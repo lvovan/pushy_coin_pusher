@@ -1,6 +1,9 @@
 /**
  * ValuableMeshes — per-valuable individual meshes (count ≤ 32, so InstancedMesh
  * is unnecessary). Each variant uses a different bright `MeshStandardMaterial`.
+ *
+ * Render rate is capped at the physics rate so we write body poses directly
+ * without prev/curr interpolation (see CoinInstances for rationale).
  */
 import * as THREE from 'three';
 
@@ -12,9 +15,8 @@ const BOX_SMALL = 0.015;
 const SPHERE_RADIUS = 0.018;
 const BOX_LARGE = 0.022;
 const HIDDEN_Y = -1000;
-const VEC3_STRIDE = 3;
-const QUAT_STRIDE = 4;
-const QUAT_W_OFFSET = 3;
+const AWAKE = 0;
+const SLEEPING = 1;
 
 function buildGeometry(variantId: number): THREE.BufferGeometry {
   if (variantId === 0) return new THREE.BoxGeometry(BOX_SMALL, BOX_SMALL, BOX_SMALL);
@@ -24,23 +26,11 @@ function buildGeometry(variantId: number): THREE.BufferGeometry {
 
 export class ValuableMeshes {
   private readonly meshes: THREE.Mesh[] = [];
-  private readonly currPos: Float32Array;
-  private readonly currQuat: Float32Array;
-  private readonly prevPos: Float32Array;
-  private readonly prevQuat: Float32Array;
-  private readonly tmpQuatA = new THREE.Quaternion();
-  private readonly tmpQuatB = new THREE.Quaternion();
+  private readonly lastSleeping: Uint8Array;
 
   constructor(scene: THREE.Scene, pool: ValuablePool) {
     const cap = gameBalance.limits.maxActiveValuables;
-    this.currPos = new Float32Array(cap * VEC3_STRIDE);
-    this.currQuat = new Float32Array(cap * QUAT_STRIDE);
-    this.prevPos = new Float32Array(cap * VEC3_STRIDE);
-    this.prevQuat = new Float32Array(cap * QUAT_STRIDE);
-    for (let i = 0; i < cap; i += 1) {
-      this.currQuat[i * QUAT_STRIDE + QUAT_W_OFFSET] = 1;
-      this.prevQuat[i * QUAT_STRIDE + QUAT_W_OFFSET] = 1;
-    }
+    this.lastSleeping = new Uint8Array(cap);
     for (let i = 0; i < cap; i += 1) {
       const slot = pool.pool.get(i)!;
       const mat = new THREE.MeshStandardMaterial({
@@ -56,91 +46,38 @@ export class ValuableMeshes {
     }
   }
 
-  snapshotPrev(pool: ValuablePool): void {
-    const indices = pool.pool.activeIndices;
-    for (let n = 0; n < indices.length; n += 1) {
-      const i = indices[n]!;
-      const pi = i * VEC3_STRIDE;
-      this.prevPos[pi] = this.currPos[pi]!;
-      this.prevPos[pi + 1] = this.currPos[pi + 1]!;
-      this.prevPos[pi + 2] = this.currPos[pi + 2]!;
-      const qi = i * QUAT_STRIDE;
-      this.prevQuat[qi] = this.currQuat[qi]!;
-      this.prevQuat[qi + 1] = this.currQuat[qi + 1]!;
-      this.prevQuat[qi + 2] = this.currQuat[qi + 2]!;
-      this.prevQuat[qi + QUAT_W_OFFSET] = this.currQuat[qi + QUAT_W_OFFSET]!;
-    }
-  }
-
-  captureCurrent(pool: ValuablePool): void {
-    const indices = pool.pool.activeIndices;
-    for (let n = 0; n < indices.length; n += 1) {
-      const i = indices[n]!;
-      const slot = pool.pool.get(i)!;
-      const t = slot.body.translation();
-      const r = slot.body.rotation();
-      const pi = i * VEC3_STRIDE;
-      this.currPos[pi] = t.x;
-      this.currPos[pi + 1] = t.y;
-      this.currPos[pi + 2] = t.z;
-      const qi = i * QUAT_STRIDE;
-      this.currQuat[qi] = r.x;
-      this.currQuat[qi + 1] = r.y;
-      this.currQuat[qi + 2] = r.z;
-      this.currQuat[qi + QUAT_W_OFFSET] = r.w;
-    }
-    const justAcquired = pool.pool.justAcquired;
-    for (let n = 0; n < justAcquired.length; n += 1) {
-      const i = justAcquired[n]!;
-      const pi = i * VEC3_STRIDE;
-      this.prevPos[pi] = this.currPos[pi]!;
-      this.prevPos[pi + 1] = this.currPos[pi + 1]!;
-      this.prevPos[pi + 2] = this.currPos[pi + 2]!;
-      const qi = i * QUAT_STRIDE;
-      this.prevQuat[qi] = this.currQuat[qi]!;
-      this.prevQuat[qi + 1] = this.currQuat[qi + 1]!;
-      this.prevQuat[qi + 2] = this.currQuat[qi + 2]!;
-      this.prevQuat[qi + QUAT_W_OFFSET] = this.currQuat[qi + QUAT_W_OFFSET]!;
-    }
-    pool.pool.clearJustAcquired();
-  }
-
-  syncRender(pool: ValuablePool, alpha: number): void {
-    // Hide all meshes whose slots are no longer active. We use the released
-    // queue for an O(released.length) sweep rather than walking all meshes.
+  syncRender(pool: ValuablePool): void {
+    // Hide all meshes whose slots are no longer active. Skip slots that
+    // were released and immediately reacquired in the same frame.
     const released = pool.pool.released;
     for (let n = 0; n < released.length; n += 1) {
-      const mesh = this.meshes[released[n]!];
+      const idx = released[n]!;
+      if (pool.pool.get(idx)?.active) continue;
+      const mesh = this.meshes[idx];
       if (mesh) mesh.visible = false;
+      this.lastSleeping[idx] = AWAKE;
     }
     pool.pool.clearReleased();
+    // Newly-acquired slots must always write at least once.
+    const justAcquired = pool.pool.justAcquired;
+    for (let n = 0; n < justAcquired.length; n += 1) {
+      this.lastSleeping[justAcquired[n]!] = AWAKE;
+    }
+    pool.pool.clearJustAcquired();
     const indices = pool.pool.activeIndices;
     for (let n = 0; n < indices.length; n += 1) {
       const i = indices[n]!;
       const mesh = this.meshes[i];
       if (!mesh) continue;
+      const slot = pool.pool.get(i)!;
+      const sleeping = slot.body.isSleeping();
+      if (sleeping && this.lastSleeping[i] === SLEEPING) continue;
+      const t = slot.body.translation();
+      const r = slot.body.rotation();
       mesh.visible = true;
-      const pi = i * VEC3_STRIDE;
-      mesh.position.set(
-        this.prevPos[pi]! + (this.currPos[pi]! - this.prevPos[pi]!) * alpha,
-        this.prevPos[pi + 1]! + (this.currPos[pi + 1]! - this.prevPos[pi + 1]!) * alpha,
-        this.prevPos[pi + 2]! + (this.currPos[pi + 2]! - this.prevPos[pi + 2]!) * alpha,
-      );
-      const qi = i * QUAT_STRIDE;
-      this.tmpQuatA.set(
-        this.prevQuat[qi]!,
-        this.prevQuat[qi + 1]!,
-        this.prevQuat[qi + 2]!,
-        this.prevQuat[qi + QUAT_W_OFFSET]!,
-      );
-      this.tmpQuatB.set(
-        this.currQuat[qi]!,
-        this.currQuat[qi + 1]!,
-        this.currQuat[qi + 2]!,
-        this.currQuat[qi + QUAT_W_OFFSET]!,
-      );
-      this.tmpQuatA.slerp(this.tmpQuatB, alpha);
-      mesh.quaternion.copy(this.tmpQuatA);
+      mesh.position.set(t.x, t.y, t.z);
+      mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      this.lastSleeping[i] = sleeping ? SLEEPING : AWAKE;
     }
   }
 }

@@ -109,7 +109,7 @@ export const gameBalance: GameBalance = Object.freeze({
     perSlotCooldownMs: 250,
     slotPositionsX: Object.freeze([-0.133, 0, 0.133]) as readonly [number, number, number],
     slotSpawnJitter: 0.01,
-    initialPileCount: 200,
+    initialPileCount: 320,
   }),
   pusher: Object.freeze({
     strokePeriodMs: 3429,

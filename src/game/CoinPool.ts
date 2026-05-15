@@ -115,7 +115,11 @@ export class CoinPool {
 
   /** True when every active coin's linear + angular speed is below epsilon. */
   allAtRest(): boolean {
-    for (const slot of this.active()) {
+    // Dense-array iteration avoids generator/iterator overhead in this
+    // potentially hot poll (called once per frame while the bank is empty).
+    const indices = this.pool.activeIndices;
+    for (let n = 0; n < indices.length; n += 1) {
+      const slot = this.pool.get(indices[n]!)!;
       const lv = slot.body.linvel();
       const av = slot.body.angvel();
       const lvSq = lv.x * lv.x + lv.y * lv.y + lv.z * lv.z;

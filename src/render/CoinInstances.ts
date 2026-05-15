@@ -2,17 +2,20 @@
  * Coin instanced rendering. One `THREE.InstancedMesh` of `maxActiveCoins`
  * cylinders gives us one draw call regardless of coin count.
  *
- * Inactive slot matrices are written to zero-scale exactly once (at init and
- * on release) — never every frame — so the per-frame matrix work scales with
- * the *active* coin count, not the pool capacity. Per-frame buffer uploads
- * use `addUpdateRange` so only the touched slot matrices are pushed to the
- * GPU instead of the full instance buffer.
+ * Per-frame work scales with the *active* coin count, not the pool capacity:
+ *   - Inactive slot matrices are written to zero-scale exactly once (at init
+ *     and on release) — never every frame.
+ *   - Steady-state sleeping bodies skip the read+compose+write after their
+ *     final resting frame (the GPU instance buffer still holds the resting
+ *     matrix).
+ *   - The instance buffer is uploaded to the GPU at most once per frame with
+ *     a single `gl.bufferSubData`.
  *
- * Render-time interpolation: `captureCurrent` snapshots the pose after each
- * physics step, `snapshotPrev` rolls current → previous before the first
- * substep of the next frame, and `syncRender(alpha)` lerps/slerps using
- * `alpha = accumulator/stepMs`. This gives smooth motion on displays that
- * refresh faster than the 60 Hz physics rate without changing physics.
+ * Render rate is capped at the physics rate (60 Hz), so render-time
+ * interpolation would only ever land at α≈1.0 — i.e. compute values we
+ * already have. We therefore write body poses directly with no prev/curr
+ * blending; this removes a snapshotPrev pass, a captureCurrent pass, a
+ * buffer-diff comparison and a per-coin slerp from the hot path.
  */
 import * as THREE from 'three';
 
@@ -22,36 +25,31 @@ import type { CoinPool } from '../game/CoinPool';
 const CYLINDER_SEGMENTS = 24;
 const ZERO_SCALE = 0;
 const COIN_BASE_SCALE = 1;
-const VEC3_STRIDE = 3;
-const QUAT_STRIDE = 4;
-const QUAT_W_OFFSET = 3;
-const MATRIX_FLOATS = 16;
+const AWAKE = 0;
+const SLEEPING = 1;
 
 export class CoinInstances {
   readonly mesh: THREE.InstancedMesh;
   private readonly tmpMatrix = new THREE.Matrix4();
   private readonly tmpPos = new THREE.Vector3();
   private readonly tmpQuat = new THREE.Quaternion();
-  private readonly tmpQuatB = new THREE.Quaternion();
   private readonly tmpScale = new THREE.Vector3();
   private readonly zeroMatrix = new THREE.Matrix4();
-  private readonly currPos: Float32Array;
-  private readonly currQuat: Float32Array;
-  private readonly prevPos: Float32Array;
-  private readonly prevQuat: Float32Array;
+  /**
+   * Per-slot "last write was for a sleeping body" flag. Sleeping bodies don't
+   * move, so once we have written their resting pose into the GPU instance
+   * buffer there is no point reading + composing + writing the same matrix
+   * every subsequent frame. The flag lets us emit exactly one write on the
+   * awake→sleep transition (when the body just went to sleep but we have not
+   * yet captured that final pose) and then skip until something wakes it.
+   * Freshly-acquired slots and freshly-released slots reset the flag to
+   * AWAKE so the next frame is guaranteed to write.
+   */
+  private readonly lastSleeping: Uint8Array;
 
   constructor(scene: THREE.Scene) {
     const cap = gameBalance.limits.maxActiveCoins;
-    this.currPos = new Float32Array(cap * VEC3_STRIDE);
-    this.currQuat = new Float32Array(cap * QUAT_STRIDE);
-    this.prevPos = new Float32Array(cap * VEC3_STRIDE);
-    this.prevQuat = new Float32Array(cap * QUAT_STRIDE);
-    // Identity quaternions (w=1) so a slot rendered before its first capture
-    // produces a degenerate (zero-scaled) but still well-defined matrix.
-    for (let i = 0; i < cap; i += 1) {
-      this.currQuat[i * QUAT_STRIDE + QUAT_W_OFFSET] = COIN_BASE_SCALE;
-      this.prevQuat[i * QUAT_STRIDE + QUAT_W_OFFSET] = COIN_BASE_SCALE;
-    }
+    this.lastSleeping = new Uint8Array(cap);
 
     const geom = new THREE.CylinderGeometry(
       gameBalance.physics.coinRadius,
@@ -87,101 +85,51 @@ export class CoinInstances {
     scene.add(this.mesh);
   }
 
-  /** Snapshot current pose buffer into previous, in preparation for the next
-   * physics step. Only touches active slots. */
-  snapshotPrev(coinPool: CoinPool): void {
+  /** Read body poses for active coins and write the instance matrix. Skips
+   * coins that were sleeping on the previous write (their GPU matrix is
+   * already correct) and zeroes the matrices of slots released since the
+   * last call. */
+  syncRender(coinPool: CoinPool): void {
     const indices = coinPool.pool.activeIndices;
-    for (let n = 0; n < indices.length; n += 1) {
-      const i = indices[n]!;
-      const pi = i * VEC3_STRIDE;
-      this.prevPos[pi] = this.currPos[pi]!;
-      this.prevPos[pi + 1] = this.currPos[pi + 1]!;
-      this.prevPos[pi + 2] = this.currPos[pi + 2]!;
-      const qi = i * QUAT_STRIDE;
-      this.prevQuat[qi] = this.currQuat[qi]!;
-      this.prevQuat[qi + 1] = this.currQuat[qi + 1]!;
-      this.prevQuat[qi + 2] = this.currQuat[qi + 2]!;
-      this.prevQuat[qi + QUAT_W_OFFSET] = this.currQuat[qi + QUAT_W_OFFSET]!;
+    this.tmpScale.set(COIN_BASE_SCALE, COIN_BASE_SCALE, COIN_BASE_SCALE);
+    let touched = false;
+    // Newly-acquired slots must always write at least once, even if the
+    // body reports sleeping on the very first frame.
+    const justAcquired = coinPool.pool.justAcquired;
+    for (let n = 0; n < justAcquired.length; n += 1) {
+      this.lastSleeping[justAcquired[n]!] = AWAKE;
     }
-  }
-
-  /** Capture current pose from physics bodies for every active coin. Newly
-   * spawned slots also have their prev buffer seeded so they don't streak
-   * from the park position on their first rendered frame. */
-  captureCurrent(coinPool: CoinPool): void {
-    const indices = coinPool.pool.activeIndices;
+    coinPool.pool.clearJustAcquired();
     for (let n = 0; n < indices.length; n += 1) {
       const i = indices[n]!;
       const slot = coinPool.pool.get(i)!;
+      const sleeping = slot.body.isSleeping();
+      // Steady-state sleeping body: GPU buffer already holds the resting
+      // matrix, so don't pay for translation+rotation+compose+upload.
+      if (sleeping && this.lastSleeping[i] === SLEEPING) continue;
       const t = slot.body.translation();
       const r = slot.body.rotation();
-      const pi = i * VEC3_STRIDE;
-      this.currPos[pi] = t.x;
-      this.currPos[pi + 1] = t.y;
-      this.currPos[pi + 2] = t.z;
-      const qi = i * QUAT_STRIDE;
-      this.currQuat[qi] = r.x;
-      this.currQuat[qi + 1] = r.y;
-      this.currQuat[qi + 2] = r.z;
-      this.currQuat[qi + QUAT_W_OFFSET] = r.w;
-    }
-    const justAcquired = coinPool.pool.justAcquired;
-    for (let n = 0; n < justAcquired.length; n += 1) {
-      const i = justAcquired[n]!;
-      const pi = i * VEC3_STRIDE;
-      this.prevPos[pi] = this.currPos[pi]!;
-      this.prevPos[pi + 1] = this.currPos[pi + 1]!;
-      this.prevPos[pi + 2] = this.currPos[pi + 2]!;
-      const qi = i * QUAT_STRIDE;
-      this.prevQuat[qi] = this.currQuat[qi]!;
-      this.prevQuat[qi + 1] = this.currQuat[qi + 1]!;
-      this.prevQuat[qi + 2] = this.currQuat[qi + 2]!;
-      this.prevQuat[qi + QUAT_W_OFFSET] = this.currQuat[qi + QUAT_W_OFFSET]!;
-    }
-    coinPool.pool.clearJustAcquired();
-  }
-
-  /** Write interpolated matrices for every active coin and zero out matrices
-   * of slots that were released since the last sync. Per-instance partial
-   * uploads via `addUpdateRange` keep GPU traffic proportional to the active
-   * set rather than the pool capacity. */
-  syncRender(coinPool: CoinPool, alpha: number): void {
-    const indices = coinPool.pool.activeIndices;
-    this.tmpScale.set(COIN_BASE_SCALE, COIN_BASE_SCALE, COIN_BASE_SCALE);
-    this.mesh.instanceMatrix.clearUpdateRanges();
-    for (let n = 0; n < indices.length; n += 1) {
-      const i = indices[n]!;
-      const pi = i * VEC3_STRIDE;
-      const qi = i * QUAT_STRIDE;
-      this.tmpPos.set(
-        this.prevPos[pi]! + (this.currPos[pi]! - this.prevPos[pi]!) * alpha,
-        this.prevPos[pi + 1]! + (this.currPos[pi + 1]! - this.prevPos[pi + 1]!) * alpha,
-        this.prevPos[pi + 2]! + (this.currPos[pi + 2]! - this.prevPos[pi + 2]!) * alpha,
-      );
-      this.tmpQuat.set(
-        this.prevQuat[qi]!,
-        this.prevQuat[qi + 1]!,
-        this.prevQuat[qi + 2]!,
-        this.prevQuat[qi + QUAT_W_OFFSET]!,
-      );
-      this.tmpQuatB.set(
-        this.currQuat[qi]!,
-        this.currQuat[qi + 1]!,
-        this.currQuat[qi + 2]!,
-        this.currQuat[qi + QUAT_W_OFFSET]!,
-      );
-      this.tmpQuat.slerp(this.tmpQuatB, alpha);
+      this.tmpPos.set(t.x, t.y, t.z);
+      this.tmpQuat.set(r.x, r.y, r.z, r.w);
       this.tmpMatrix.compose(this.tmpPos, this.tmpQuat, this.tmpScale);
       this.mesh.setMatrixAt(i, this.tmpMatrix);
-      this.mesh.instanceMatrix.addUpdateRange(i * MATRIX_FLOATS, MATRIX_FLOATS);
+      this.lastSleeping[i] = sleeping ? SLEEPING : AWAKE;
+      touched = true;
     }
     const released = coinPool.pool.released;
     for (let n = 0; n < released.length; n += 1) {
       const i = released[n]!;
+      // A slot can appear in `released` and also be currently active when
+      // it was released and immediately reacquired in the same frame
+      // (e.g. Play Again: release-all then prefill, reusing the same
+      // free-list indices). Skip the zero-write in that case so we don't
+      // erase the freshly-drawn matrix.
+      if (coinPool.pool.get(i)!.active) continue;
       this.mesh.setMatrixAt(i, this.zeroMatrix);
-      this.mesh.instanceMatrix.addUpdateRange(i * MATRIX_FLOATS, MATRIX_FLOATS);
+      this.lastSleeping[i] = AWAKE;
+      touched = true;
     }
     coinPool.pool.clearReleased();
-    this.mesh.instanceMatrix.needsUpdate = true;
+    if (touched) this.mesh.instanceMatrix.needsUpdate = true;
   }
 }

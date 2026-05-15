@@ -240,17 +240,21 @@ export class Tray {
    *   (1) Phase 1 — Deterministic tower construction. Each tower coin is
    *       spawned directly at its final lattice position on top of its
    *       supporting surface (pusher top / plate floor). No coin "rains
-   *       down" during this phase. The lattice used is a classic square
-   *       step-pyramid (coins lying flat, layer L from the bottom holds
-   *       (layers − L)² coins) — geometrically the most stable arcade
-   *       coin-pusher prefill: each upper coin rests squarely on four
-   *       lower coins, so gravity keeps the stack put and no per-body
-   *       gravity hack is needed.
+   *       down" during this phase. The lattice used is an interleaved
+   *       coin-pusher: each layer holds four coins arranged in a 2×2
+   *       square (touching, at 90° around a common vertical axis), and
+   *       every successive layer is rotated by 45° relative to the one
+   *       below. Each upper coin therefore rests symmetrically on its
+   *       two adjacent lower coins (45° away on either side), giving a
+   *       balanced, lattice-like column that holds its shape under
+   *       gravity. Coins spawn AT their final lattice position with
+   *       essentially zero drop so no initial momentum is imparted to
+   *       the column.
    *
    *   (2) Phase 2 — Controlled rain. After `rainDelayMs` of simulation
    *       has elapsed (caller-scheduled) the returned `startRain()`
    *       callback spawns the remaining coins high above the playfield.
-   *       A square no-rain zone is enforced above each pyramid footprint
+   *       A square no-rain zone is enforced above each tower footprint
    *       (rejection sampling) so a rain coin NEVER spawns directly
    *       above a tower. Once a rain coin lands on the plate or pusher
    *       it is subject to normal physics — it may still bounce sideways
@@ -263,52 +267,76 @@ export class Tray {
     rainDelayMs: number;
     startRain: () => number;
   } {
-    // Pyramid sizes — small step pyramids that are individually stable
-    // under gravity:
-    //   pusher : 3 layers (9 + 4 + 1 = 14 coins)
-    //   plate  : 4 layers (16 + 9 + 4 + 1 = 30 coins)
-    const PUSHER_PYRAMID_LAYERS = 3;
-    const PLATE_PYRAMID_LAYERS = 4;
+    // Coin-tower sizes — tall, narrow interleaved stacks (4 coins per
+    // layer, every layer rotated 45° relative to the one below):
+    //   pusher : 20 layers (20 × 4 =  80 coins)
+    //   plate  : 40 layers (40 × 4 = 160 coins)
+    const PUSHER_TOWER_LAYERS = 20;
+    const PLATE_TOWER_LAYERS = 40;
     // Pusher top surface Y derived from Pusher.ts geometry
     // (PUSHER_HEIGHT - PUSHER_FLOOR_EMBED).
     const PUSHER_TOP_SURFACE_Y = 0.02875;
-    // Random-placement Z ranges per surface. Pusher pyramid stays inside
+    // Random-placement Z ranges per surface. Pusher tower stays inside
     // the visible portion of the moving plate (between the back wall and
-    // the pusher's front edge at phase 0). Plate pyramid is biased toward
+    // the pusher's front edge at phase 0). Plate tower is biased toward
     // the front half so it's clearly visible in front of the pusher and
     // stays clear of the plate's slanted front lip.
     //
-    // CRITICAL: The plate pyramid's back edge MUST stay clear of the
-    // pusher's front face at z = -0.10 (phase 0). The plate-pyramid
-    // base half-extent is `(layers-1)·spacing/2 + coinRadius ≈ 0.0915`,
-    // so any `PLATE_PYRAMID_Z_MIN < -0.10 + 0.0915 ≈ -0.0085` would
-    // spawn the back row of the plate pyramid INSIDE the kinematic
-    // pusher body (which occupies y ∈ [-0.005, 0.02875] at z ∈ [-0.55,
-    // -0.10]); the solver then ejects those coins forward, leaving
-    // them lodged in the narrow visual seam between the pusher's front
-    // face and the plate. Keep a 0.01 m safety margin.
-    const PUSHER_PYRAMID_Z_MIN = -0.2;
-    const PUSHER_PYRAMID_Z_MAX = -0.14;
-    const PLATE_PYRAMID_Z_MIN = 0.01;
-    const PLATE_PYRAMID_Z_MAX = 0.09;
-    const PYRAMID_EDGE_MARGIN = 0.02;
-    const PYRAMID_SPACING_MULT = 2.05;
-    // Lift each pyramid base slightly above its surface so the bottom
-    // layer settles cleanly under gravity once the loop starts.
-    const PUSHER_PYRAMID_LIFT = 0.002;
-    const PLATE_PYRAMID_LIFT = 0.002;
+    // CRITICAL: The plate tower's back edge MUST stay clear of the
+    // pusher's FULLY-EXTENDED front face (including the front lip),
+    // otherwise the pusher hits the tower on its first forward stroke
+    // and topples it. Geometry derived from gameBalance + Pusher.ts:
+    //   pusher front face at full extension =
+    //     basePositionZ + PUSHER_DEPTH/2 + strokeAmplitude
+    //     = -0.325 + 0.225 + 0.1 = 0.00 m
+    //   plus PUSHER_LIP_LENGTH ≈ 0.05 m of slanted ramp riding the top
+    //     → effective leading edge at full extension ≈ +0.05 m
+    // With a tower footprint half-extent of ~0.055 m and a 0.01 m
+    // safety margin, the tower centre must satisfy tower_z >= 0.115.
+    // On the front side, the plate's flat floor ends at z ≈ +0.20
+    // (where the plate's slanted front lip begins), so tower_z must
+    // also stay <= 0.20 − 0.055 − 0.01 ≈ 0.135 to keep the tower's
+    // front edge on flat floor. The Z window below sits inside that
+    // safe band.
+    const PUSHER_TOWER_Z_MIN = -0.2;
+    const PUSHER_TOWER_Z_MAX = -0.14;
+    const PLATE_TOWER_Z_MIN = 0.12;
+    const PLATE_TOWER_Z_MAX = 0.13;
+    const TOWER_EDGE_MARGIN = 0.02;
+    // Per-layer ring radius as a multiple of `coinRadius`. With 4 coins
+    // arranged on the ring (90° apart) the in-layer chord is
+    // 2·d·sin(45°) = d·√2, so coins exactly touch when d = √2·r. We
+    // use a hair more (1.43) so the contact solver is never asked to
+    // resolve initial inter-penetration between in-layer neighbours
+    // while still preserving the "2×2 square" look from the reference
+    // (even-level) image.
+    const TOWER_RING_RADIUS_MULT = 1.43;
+    // Lift each tower base by an essentially-zero margin above its
+    // supporting surface. The tower is spawned coin-by-coin AT its
+    // final lattice position, not rained in — so any non-trivial drop
+    // would impart vertical momentum that cascades up the column and
+    // collapses it. 0.1 mm is enough to keep the bottom face from
+    // initially interpenetrating the floor collider, and small enough
+    // that the settle motion is imperceptible.
+    const PUSHER_TOWER_LIFT = 0.0001;
+    const PLATE_TOWER_LIFT = 0.0001;
     // Scatter coins spawn high above the playfield so the falling
     // animation is clearly visible after the loop starts.
     const SCATTER_MARGIN = 0.03;
     const SCATTER_MIN_Y = 0.3;
     const SCATTER_Y_RANGE = 0.6;
-    // Extra clearance around each pyramid footprint when sampling
-    // scatter positions, so rain coins NEVER spawn directly above a
-    // pyramid (the no-rain zone).
-    const PYRAMID_KEEP_OUT_MARGIN = 0.02;
+    // Extra clearance around each tower footprint when sampling
+    // scatter positions, so rain coins NEVER spawn directly above (or
+    // close to) a tower. Sized at roughly 2.5× the coin radius so even
+    // a rain coin that lands at the very edge of the keep-out band
+    // cannot strike the outer ring of the tower as it bounces. The
+    // tower's own footprint half-extent is only ~2.18·r, so this
+    // margin keeps a clean gap of >= 1 coin-diameter around the
+    // column.
+    const TOWER_KEEP_OUT_MARGIN = 0.06;
     // Per-coin rejection-sampling budget. If the budget is ever
     // exhausted we STOP spawning rather than fall back to placing a
-    // coin above a pyramid, satisfying the contract that no rain coin
+    // coin above a tower, satisfying the contract that no rain coin
     // ever falls directly onto a tower.
     const SCATTER_MAX_RETRIES = 32;
     const SEED_OFFSET = 2;
@@ -325,60 +353,60 @@ export class Tray {
     const cr = gameBalance.physics.coinRadius;
     const ct = gameBalance.physics.coinThickness;
 
-    // Pyramid base half-extent in XZ — half of (side−1)·spacing plus a
-    // coin radius for the outermost coin's edge.
-    const spacing = cr * PYRAMID_SPACING_MULT;
-    const pusherBaseHalf = (PUSHER_PYRAMID_LAYERS - 1) * spacing * HALF + cr;
-    const plateBaseHalf = (PLATE_PYRAMID_LAYERS - 1) * spacing * HALF + cr;
+    // Tower footprint half-extent in XZ — the ring radius plus a coin
+    // radius (each in-layer coin's outer edge). Identical for both
+    // towers because the ring geometry is independent of layer count.
+    const ringRadius = cr * TOWER_RING_RADIUS_MULT;
+    const towerHalfExtent = ringRadius + cr;
 
-    // Pick a random centre for each pyramid such that the entire
+    // Pick a random centre for each tower such that the entire
     // footprint remains inside its surface plus a small edge margin.
     const pusherX = rng.range(
-      -this.halfWidth + pusherBaseHalf + PYRAMID_EDGE_MARGIN,
-      this.halfWidth - pusherBaseHalf - PYRAMID_EDGE_MARGIN,
+      -this.halfWidth + towerHalfExtent + TOWER_EDGE_MARGIN,
+      this.halfWidth - towerHalfExtent - TOWER_EDGE_MARGIN,
     );
-    const pusherZ = rng.range(PUSHER_PYRAMID_Z_MIN, PUSHER_PYRAMID_Z_MAX);
+    const pusherZ = rng.range(PUSHER_TOWER_Z_MIN, PUSHER_TOWER_Z_MAX);
     const plateX = rng.range(
-      -this.halfWidth + plateBaseHalf + PYRAMID_EDGE_MARGIN,
-      this.halfWidth - plateBaseHalf - PYRAMID_EDGE_MARGIN,
+      -this.halfWidth + towerHalfExtent + TOWER_EDGE_MARGIN,
+      this.halfWidth - towerHalfExtent - TOWER_EDGE_MARGIN,
     );
-    const plateZ = rng.range(PLATE_PYRAMID_Z_MIN, PLATE_PYRAMID_Z_MAX);
+    const plateZ = rng.range(PLATE_TOWER_Z_MIN, PLATE_TOWER_Z_MAX);
 
     // (1) Phase 1 — Deterministic tower construction. Coins spawn
     //     directly at their final lattice positions on the supporting
     //     surface; no coin "rains down" in this phase.
     let towersPlaced = 0;
-    towersPlaced += this.placePyramid(
+    towersPlaced += this.placeCoinTower(
       coinPool,
       pusherX,
       pusherZ,
-      PUSHER_TOP_SURFACE_Y + PUSHER_PYRAMID_LIFT,
-      cr,
+      PUSHER_TOP_SURFACE_Y + PUSHER_TOWER_LIFT,
+      ringRadius,
       ct,
-      PUSHER_PYRAMID_LAYERS,
+      PUSHER_TOWER_LAYERS,
       count - towersPlaced,
     );
-    towersPlaced += this.placePyramid(
+    towersPlaced += this.placeCoinTower(
       coinPool,
       plateX,
       plateZ,
-      this.floorY + PLATE_PYRAMID_LIFT,
-      cr,
+      this.floorY + PLATE_TOWER_LIFT,
+      ringRadius,
       ct,
-      PLATE_PYRAMID_LAYERS,
+      PLATE_TOWER_LAYERS,
       count - towersPlaced,
     );
 
     // (2) Phase 2 — Controlled rain. Invoked by the caller after
-    //     RAIN_DELAY_MS so the pyramids are stable before any rain
-    //     coin lands. A square no-rain zone is enforced above each
-    //     pyramid footprint via rejection sampling.
+    //     RAIN_DELAY_MS so the towers are stable before any rain coin
+    //     lands. A square no-rain zone is enforced above each tower
+    //     footprint via rejection sampling.
     const xMin = -this.halfWidth + SCATTER_MARGIN;
     const xMax = this.halfWidth - SCATTER_MARGIN;
     const zMin = -this.halfDepth + SCATTER_MARGIN;
     const zMax = this.halfDepth - SCATTER_MARGIN;
-    const pusherKeepHalf = pusherBaseHalf + PYRAMID_KEEP_OUT_MARGIN;
-    const plateKeepHalf = plateBaseHalf + PYRAMID_KEEP_OUT_MARGIN;
+    const pusherKeepHalf = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
+    const plateKeepHalf = towerHalfExtent + TOWER_KEEP_OUT_MARGIN;
     const startRain = (): number => {
       let placed = towersPlaced;
       while (placed < count) {
@@ -410,45 +438,58 @@ export class Tray {
   }
 
   /**
-   * Place a square-base step pyramid of coins, layer L from the bottom
-   * holding (layers − L)² coins arranged in a grid of pitch
-   * `2.05 × coinRadius`. Each layer is lifted by `coinThickness` plus a
-   * small gap so the stack settles cleanly under gravity. Coins are
-   * spawned with default rotation (cylinder axis = Y → flat coins) and
-   * default gravity scale, so the pyramid is held together by gravity
+   * Place an interleaved "coin tower": every layer contains four coins
+   * arranged at 90° around a common vertical axis at distance
+   * `ringRadius` from `(centerX, centerZ)` (a 2×2 square footprint),
+   * and successive layers are rotated by 45° relative to the one
+   * below. The 45° offset (= half the in-layer angular pitch) places
+   * every upper coin symmetrically between two adjacent lower coins,
+   * giving each upper coin a balanced two-coin support footprint and
+   * the classic ABAB interleaved-stack stability. Coins are spawned
+   * with default rotation (cylinder axis = Y → coins lying flat) and
+   * default gravity scale, so the tower is held together by gravity
    * + contact forces alone — no per-body hacks. Returns the number of
    * coins placed, never exceeding `maxCoins`.
    */
-  private placePyramid(
+  private placeCoinTower(
     coinPool: CoinPool,
     centerX: number,
     centerZ: number,
     baseY: number,
-    coinRadius: number,
+    ringRadius: number,
     coinThickness: number,
     layers: number,
     maxCoins: number,
   ): number {
-    const SPACING_MULT = 2.05;
-    const LAYER_GAP = 0.001;
-    const LIFT = 0.003;
-    const spacing = coinRadius * SPACING_MULT;
+    const COINS_PER_LAYER = 4;
+    // 2π / COINS_PER_LAYER — angular spacing between coins in one ring
+    // (90° for a 4-coin ring).
+    const COIN_ANGLE_STEP_RAD = (Math.PI * 2) / COINS_PER_LAYER;
+    // Per-layer rotation = half the in-layer angular pitch
+    // (π / COINS_PER_LAYER = 45° for a 4-coin ring). This produces a
+    // textbook ABAB interleave: every upper coin sits exactly between
+    // two adjacent lower coins, supported symmetrically on both sides.
+    const LAYER_ROTATION_RAD = Math.PI / COINS_PER_LAYER;
+    // Near-zero spawn gap: spawn each layer just barely above the one
+    // below so there is no free-fall settling at game start. Any
+    // non-trivial gap, multiplied across 20 layers, would generate
+    // enough downward momentum to start the column oscillating.
+    const LAYER_GAP = 0.00005;
+    const LIFT = 0.00005;
     const layerStep = coinThickness + LAYER_GAP;
     let placed = 0;
     for (let l = 0; l < layers; l += 1) {
       if (placed >= maxCoins) return placed;
-      const side = layers - l;
-      const halfExtent = (side - 1) * spacing * HALF;
       const y = baseY + LIFT + coinThickness * HALF + l * layerStep;
-      for (let i = 0; i < side; i += 1) {
-        for (let j = 0; j < side; j += 1) {
-          if (placed >= maxCoins) return placed;
-          const x = centerX - halfExtent + i * spacing;
-          const z = centerZ - halfExtent + j * spacing;
-          const coin = coinPool.spawn(x, y, z);
-          if (!coin) return placed;
-          placed += 1;
-        }
+      const baseAngle = l * LAYER_ROTATION_RAD;
+      for (let k = 0; k < COINS_PER_LAYER; k += 1) {
+        if (placed >= maxCoins) return placed;
+        const angle = baseAngle + k * COIN_ANGLE_STEP_RAD;
+        const x = centerX + Math.cos(angle) * ringRadius;
+        const z = centerZ + Math.sin(angle) * ringRadius;
+        const coin = coinPool.spawn(x, y, z);
+        if (!coin) return placed;
+        placed += 1;
       }
     }
     return placed;
